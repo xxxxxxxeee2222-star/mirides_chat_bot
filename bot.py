@@ -17,8 +17,14 @@ NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
 def load_json(path, default):
     if not path.exists():
         return default
-    with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            raw = file.read().strip()
+            if not raw:
+                return default
+            return json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return default
 
 
 def save_json(path, data):
@@ -289,7 +295,7 @@ def poll_chat_feed(config):
         send_group_message(
             config["telegram_bot_token"],
             config["chat_forward_chat_id"],
-            f"MC | {player_name}: {message}",
+            f"Ⓣ {player_name} » {message}",
             config.get("chat_forward_thread_id", ""),
         )
         if item_id > max_id:
@@ -303,7 +309,9 @@ def poll_chat_feed(config):
 
 def process_message(config, users, message, last_usage):
     token = config["telegram_bot_token"]
-    chat_id = message["chat"]["id"]
+    chat = message["chat"]
+    chat_id = chat["id"]
+    chat_type = str(chat.get("type", "")).strip().lower()
     telegram_id = str(message["from"]["id"])
     message_id = message["message_id"]
     message_thread_id = str(message.get("message_thread_id", "")).strip()
@@ -312,6 +320,11 @@ def process_message(config, users, message, last_usage):
     config["_reply_thread_id"] = message_thread_id
 
     if not text:
+        return
+
+    if chat_type not in {"group", "supergroup"}:
+        if lowered in {"help", "menu", "start"}:
+            send_message(token, chat_id, "Пиши команды только в группе.", message_thread_id)
         return
 
     if lowered in {"help", "помощь", "menu", "меню", "start"}:
