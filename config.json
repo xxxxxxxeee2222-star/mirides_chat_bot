@@ -1,6 +1,6 @@
 {
   "telegram_bot_token": "8726825045:AAF2ctacfPMGrUg9JpZ4yvbCrIK8aGGJG98",
-  "mirides_url": "http://45.93.200.14:25586/mirides",
+  "mirides_url": "http://45.93.200.14:18590/mirides",
   "mirides_method": "POST",
   "mirides_token": "MiridesBridge_25_03_2026_X7k9Qp",
   "mirides_token_field": "token",
@@ -8,7 +8,7 @@
   "mirides_nickname_field": "nickname",
   "telegram_id_field": "telegram_id",
   "mirides_success_message": "Сообщение отправлено в игровой чат.",
-  "online_url": "http://45.93.200.14:25586/online",
+  "online_url": "http://45.93.200.14:18590/online",
   "online_method": "GET",
   "online_token": "MiridesBridge_25_03_2026_X7k9Qp",
   "online_token_field": "token",
