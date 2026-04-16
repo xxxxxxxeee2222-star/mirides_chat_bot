@@ -1,0 +1,17 @@
+{
+  "telegram_bot_token": "PASTE_TELEGRAM_BOT_TOKEN",
+  "mirides_url": "http://YOUR_SERVER_IP:18587/mirides",
+  "mirides_method": "POST",
+  "mirides_token": "CHANGE_ME_SECRET_TOKEN",
+  "mirides_token_field": "token",
+  "mirides_message_field": "message",
+  "mirides_nickname_field": "nickname",
+  "telegram_id_field": "telegram_id",
+  "mirides_success_message": "Сообщение отправлено в игровой чат.",
+  "online_url": "http://YOUR_SERVER_IP:18587/online",
+  "online_method": "GET",
+  "online_token": "CHANGE_ME_SECRET_TOKEN",
+  "online_token_field": "token",
+  "online_response_path": "online",
+  "poll_timeout_seconds": 30
+}
