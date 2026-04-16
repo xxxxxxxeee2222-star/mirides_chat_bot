@@ -257,12 +257,6 @@ def handle_online(config, chat_id):
     send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_value}", config.get("_reply_thread_id", ""))
 
 
-def bind_forward_topic(config, chat_id, message_thread_id):
-    config["chat_forward_chat_id"] = str(chat_id)
-    config["chat_forward_thread_id"] = str(message_thread_id).strip()
-    save_config(config)
-
-
 def poll_chat_feed(config):
     if not config.get("chat_feed_url") or not config.get("chat_forward_chat_id"):
         return config
@@ -316,9 +310,6 @@ def process_message(config, users, message, last_usage):
     text = message.get("text", "").strip()
     lowered = text.lower()
     config["_reply_thread_id"] = message_thread_id
-
-    if message_thread_id:
-        bind_forward_topic(config, chat_id, message_thread_id)
 
     if not text:
         return
