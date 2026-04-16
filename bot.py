@@ -203,11 +203,8 @@ def handle_mirides(config, users, chat_id, telegram_id, text):
     if isinstance(response, dict):
         if response.get("ok") is False:
             raise RuntimeError(response.get("error", "Не удалось отправить сообщение"))
-        if response.get("message"):
-            send_message(config["telegram_bot_token"], chat_id, str(response["message"]))
-            return
 
-    send_message(config["telegram_bot_token"], chat_id, config["mirides_success_message"])
+    send_message(config["telegram_bot_token"], chat_id, f"{nickname}: {message}")
 
 
 def handle_online(config, chat_id):
