@@ -134,14 +134,12 @@ def extract_value(payload, path):
 
 def build_help_text():
     return (
-        "Команды:\n"
-        "/nick ваш_ник - сохранить ник игрока\n"
-        "/mynick - показать сохраненный ник\n"
-        "/mirides текст - отправить сообщение в игровой чат\n"
-        "/online - показать онлайн\n"
-        "/help - помощь\n\n"
-        "Сначала обязательно укажи ник через /nick.\n"
-        f"Кулдаун на /mirides и /online: {COOLDOWN_SECONDS} секунд."
+        "Пиши так:\n"
+        "nick ваш_ник\n"
+        "online\n"
+        "chat ваш_текст\n\n"
+        "Сначала один раз укажи ник.\n"
+        f"Кулдаун на chat и online: {COOLDOWN_SECONDS} секунд."
     )
 
 
@@ -177,7 +175,7 @@ def handle_mynick(config, users, chat_id, telegram_id):
     user = users.get(telegram_id, {})
     nickname = str(user.get("nickname", "")).strip()
     if not nickname:
-        send_message(config["telegram_bot_token"], chat_id, "Ник еще не сохранен. Используй /nick ваш_ник")
+        send_message(config["telegram_bot_token"], chat_id, "Ник еще не сохранен. Используй: nick ваш_ник")
         return
     send_message(config["telegram_bot_token"], chat_id, f"Твой ник: {nickname}")
 
@@ -186,11 +184,11 @@ def handle_mirides(config, users, chat_id, telegram_id, text):
     user = users.get(telegram_id, {})
     nickname = str(user.get("nickname", "")).strip()
     if not nickname:
-        raise ValueError("Сначала добавь ник игрока через /nick ваш_ник")
+        raise ValueError("Сначала добавь ник игрока: nick ваш_ник")
 
     parts = text.split(" ", 1)
     if len(parts) < 2 or not parts[1].strip():
-        raise ValueError("Использование: /mirides всем привет")
+        raise ValueError("Использование: chat всем привет")
 
     message = parts[1].strip()
     params = {
@@ -241,33 +239,34 @@ def process_message(config, users, message, last_usage):
     if not text:
         return
 
-    if lowered in {"/start", "/help", "help", "помощь"}:
+    if lowered in {"help", "помощь", "menu", "меню", "start"}:
         send_message(token, chat_id, build_help_text())
         delete_message(token, chat_id, message_id)
         return
 
-    if text.startswith("/nick") or lowered.startswith("nick ") or lowered.startswith("ник "):
-        handle_nick(config, users, chat_id, telegram_id, text)
+    if lowered.startswith("nick "):
+        normalized_text = "/nick " + text.split(" ", 1)[1]
+        handle_nick(config, users, chat_id, telegram_id, normalized_text)
         delete_message(token, chat_id, message_id)
         return
 
-    if lowered in {"/mynick", "mynick", "мойник", "nick"}:
+    if lowered in {"mynick", "мойник", "мой ник"}:
         handle_mynick(config, users, chat_id, telegram_id)
         delete_message(token, chat_id, message_id)
         return
 
-    if text.startswith("/mirides") or lowered.startswith("mirides "):
+    if lowered.startswith("chat "):
         allowed, seconds_left = check_cooldown(last_usage, telegram_id)
         if not allowed:
             send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.")
             delete_message(token, chat_id, message_id)
             return
-        command_text = text if text.startswith("/mirides") else "/mirides " + text.split(" ", 1)[1]
+        command_text = "/mirides " + text.split(" ", 1)[1]
         handle_mirides(config, users, chat_id, telegram_id, command_text)
         delete_message(token, chat_id, message_id)
         return
 
-    if lowered in {"/online", "online", "онлайн"}:
+    if lowered == "online":
         allowed, seconds_left = check_cooldown(last_usage, telegram_id)
         if not allowed:
             send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.")
