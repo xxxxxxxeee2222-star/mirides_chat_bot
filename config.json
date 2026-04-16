@@ -13,5 +13,12 @@
   "online_token": "MiridesBridge_25_03_2026_X7k9Qp",
   "online_token_field": "token",
   "online_response_path": "online",
-  "poll_timeout_seconds": 30
+  "poll_timeout_seconds": 30,
+  "chat_feed_url": "http://45.93.200.14:18590/chat-feed",
+  "chat_feed_method": "GET",
+  "chat_feed_token": "MiridesBridge_25_03_2026_X7k9Qp",
+  "chat_feed_token_field": "token",
+  "chat_feed_after_id": 0,
+  "chat_forward_chat_id": "-1003276648560",
+  "chat_forward_thread_id": ""
 }

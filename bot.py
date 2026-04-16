@@ -45,6 +45,13 @@ def load_config():
     config.setdefault("telegram_id_field", "telegram_id")
     config.setdefault("mirides_success_message", "Сообщение отправлено в игровой чат.")
     config.setdefault("online_response_path", "online")
+    config.setdefault("chat_feed_url", "")
+    config.setdefault("chat_feed_method", "GET")
+    config.setdefault("chat_feed_token", "")
+    config.setdefault("chat_feed_token_field", "token")
+    config.setdefault("chat_feed_after_id", 0)
+    config.setdefault("chat_forward_chat_id", "")
+    config.setdefault("chat_forward_thread_id", "")
     return config
 
 
@@ -55,6 +62,10 @@ def load_users():
 
 def save_users(users):
     save_json(USERS_PATH, users)
+
+
+def save_config(config):
+    save_json(CONFIG_PATH, config)
 
 
 def ensure_runtime_files():
@@ -78,6 +89,13 @@ def telegram_request(token, method, params=None):
 
 def send_message(token, chat_id, text):
     telegram_request(token, "sendMessage", {"chat_id": str(chat_id), "text": text})
+
+
+def send_group_message(token, chat_id, text, message_thread_id=""):
+    params = {"chat_id": str(chat_id), "text": text}
+    if str(message_thread_id).strip():
+        params["message_thread_id"] = str(message_thread_id).strip()
+    telegram_request(token, "sendMessage", params)
 
 
 def delete_message(token, chat_id, message_id):
@@ -166,6 +184,11 @@ def handle_nick(config, users, chat_id, telegram_id, text):
     nickname = parts[1].strip()
     validate_nickname(nickname)
 
+    existing_nickname = str(users.get(telegram_id, {}).get("nickname", "")).strip()
+    if existing_nickname:
+        send_message(config["telegram_bot_token"], chat_id, f"Ник уже привязан: {existing_nickname}")
+        return
+
     users[telegram_id] = {"nickname": nickname}
     save_users(users)
     send_message(config["telegram_bot_token"], chat_id, f"Ник сохранен: {nickname}")
@@ -230,6 +253,43 @@ def handle_online(config, chat_id):
     send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_value}")
 
 
+def poll_chat_feed(config):
+    if not config.get("chat_feed_url") or not config.get("chat_forward_chat_id"):
+        return config
+
+    params = {
+        "after_id": int(config.get("chat_feed_after_id", 0)),
+    }
+    if config.get("chat_feed_token"):
+        params[config["chat_feed_token_field"]] = config["chat_feed_token"]
+
+    response = send_http_request(config["chat_feed_url"], config["chat_feed_method"], params)
+    if not isinstance(response, dict):
+        return config
+
+    items = response.get("items", [])
+    max_id = int(config.get("chat_feed_after_id", 0))
+    for item in items:
+        item_id = int(item.get("id", 0))
+        player_name = str(item.get("playerName", "")).strip()
+        message = str(item.get("message", "")).strip()
+        if item_id <= 0 or not player_name or not message:
+            continue
+        send_group_message(
+            config["telegram_bot_token"],
+            config["chat_forward_chat_id"],
+            f"MC | {player_name}: {message}",
+            config.get("chat_forward_thread_id", ""),
+        )
+        if item_id > max_id:
+            max_id = item_id
+
+    if max_id != int(config.get("chat_feed_after_id", 0)):
+        config["chat_feed_after_id"] = max_id
+        save_config(config)
+    return config
+
+
 def process_message(config, users, message, last_usage):
     token = config["telegram_bot_token"]
     chat_id = message["chat"]["id"]
@@ -291,6 +351,11 @@ def main():
 
     while True:
         try:
+            try:
+                config = poll_chat_feed(config)
+            except Exception as exc:
+                print(f"Chat feed poll error: {exc}")
+
             updates = telegram_request(
                 token,
                 "getUpdates",
