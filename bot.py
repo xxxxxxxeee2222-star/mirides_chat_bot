@@ -267,19 +267,10 @@ def handle_playtime_top(config, chat_id):
     if not isinstance(response, dict) or response.get("ok") is False:
         raise RuntimeError("Не удалось получить топ по плейтайму")
 
-    items = response.get("items", [])
-    if not items:
+    lines = [str(line).strip() for line in response.get("lines", []) if str(line).strip()]
+    if not lines:
         send_message(config["telegram_bot_token"], chat_id, "Топ по плейтайму пока пуст.", config.get("_reply_thread_id", ""))
         return
-
-    lines = ["Топ по плейтайму:"]
-    for item in items:
-        place = item.get("place", 0)
-        player_name = str(item.get("playerName", "")).strip()
-        formatted = str(item.get("formattedPlaytime", "")).strip()
-        if not player_name or not formatted:
-            continue
-        lines.append(f"{place}. {player_name} — {formatted}")
 
     send_message(config["telegram_bot_token"], chat_id, "\n".join(lines), config.get("_reply_thread_id", ""))
 
