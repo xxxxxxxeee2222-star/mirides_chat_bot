@@ -80,6 +80,20 @@ def send_message(token, chat_id, text):
     telegram_request(token, "sendMessage", {"chat_id": str(chat_id), "text": text})
 
 
+def delete_message(token, chat_id, message_id):
+    try:
+        telegram_request(
+            token,
+            "deleteMessage",
+            {
+                "chat_id": str(chat_id),
+                "message_id": str(message_id),
+            },
+        )
+    except Exception:
+        pass
+
+
 def send_http_request(url, method="GET", params=None):
     params = params or {}
     method = method.upper()
@@ -220,37 +234,47 @@ def process_message(config, users, message, last_usage):
     token = config["telegram_bot_token"]
     chat_id = message["chat"]["id"]
     telegram_id = str(message["from"]["id"])
+    message_id = message["message_id"]
     text = message.get("text", "").strip()
+    lowered = text.lower()
 
     if not text:
         return
 
-    if text in {"/start", "/help"}:
+    if lowered in {"/start", "/help", "help", "помощь"}:
         send_message(token, chat_id, build_help_text())
+        delete_message(token, chat_id, message_id)
         return
 
-    if text.startswith("/nick"):
+    if text.startswith("/nick") or lowered.startswith("nick ") or lowered.startswith("ник "):
         handle_nick(config, users, chat_id, telegram_id, text)
+        delete_message(token, chat_id, message_id)
         return
 
-    if text == "/mynick":
+    if lowered in {"/mynick", "mynick", "мойник", "nick"}:
         handle_mynick(config, users, chat_id, telegram_id)
+        delete_message(token, chat_id, message_id)
         return
 
-    if text.startswith("/mirides"):
+    if text.startswith("/mirides") or lowered.startswith("mirides "):
         allowed, seconds_left = check_cooldown(last_usage, telegram_id)
         if not allowed:
             send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.")
+            delete_message(token, chat_id, message_id)
             return
-        handle_mirides(config, users, chat_id, telegram_id, text)
+        command_text = text if text.startswith("/mirides") else "/mirides " + text.split(" ", 1)[1]
+        handle_mirides(config, users, chat_id, telegram_id, command_text)
+        delete_message(token, chat_id, message_id)
         return
 
-    if text == "/online":
+    if lowered in {"/online", "online", "онлайн"}:
         allowed, seconds_left = check_cooldown(last_usage, telegram_id)
         if not allowed:
             send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.")
+            delete_message(token, chat_id, message_id)
             return
         handle_online(config, chat_id)
+        delete_message(token, chat_id, message_id)
         return
 
     send_message(token, chat_id, build_help_text())
