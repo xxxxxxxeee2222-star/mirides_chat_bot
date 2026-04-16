@@ -269,12 +269,19 @@ def poll_chat_feed(config):
 
     items = response.get("items", [])
     max_id = int(config.get("chat_feed_after_id", 0))
+    sent_keys = set()
     for item in items:
         item_id = int(item.get("id", 0))
         player_name = str(item.get("playerName", "")).strip()
         message = str(item.get("message", "")).strip()
         if item_id <= 0 or not player_name or not message:
             continue
+        dedupe_key = (player_name, message)
+        if dedupe_key in sent_keys:
+            if item_id > max_id:
+                max_id = item_id
+            continue
+        sent_keys.add(dedupe_key)
         send_group_message(
             config["telegram_bot_token"],
             config["chat_forward_chat_id"],
