@@ -32,6 +32,11 @@ def save_json(path, data):
         json.dump(data, file, ensure_ascii=False, indent=2)
 
 
+def ensure_runtime_files():
+    if not USERS_PATH.exists():
+        save_json(USERS_PATH, {})
+
+
 def load_config():
     config = load_json(CONFIG_PATH, {})
     required_keys = ["telegram_bot_token", "mirides_url", "online_url"]
@@ -39,9 +44,14 @@ def load_config():
     if missing:
         raise RuntimeError("В config.json не заполнены обязательные поля: " + ", ".join(missing))
 
-    config.setdefault("poll_timeout_seconds", 30)
+    config.setdefault("poll_timeout_seconds", 2)
     config.setdefault("mirides_method", "POST")
     config.setdefault("online_method", "GET")
+    config.setdefault("playtime_top_url", config["online_url"].rsplit("/", 1)[0] + "/playtime-top")
+    config.setdefault("playtime_top_method", "GET")
+    config.setdefault("playtime_top_token", config.get("online_token", ""))
+    config.setdefault("playtime_top_token_field", "token")
+    config.setdefault("playtime_top_limit", 10)
     config.setdefault("mirides_token", "")
     config.setdefault("online_token", "")
     config.setdefault("mirides_token_field", "token")
@@ -49,7 +59,6 @@ def load_config():
     config.setdefault("mirides_message_field", "message")
     config.setdefault("mirides_nickname_field", "nickname")
     config.setdefault("telegram_id_field", "telegram_id")
-    config.setdefault("mirides_success_message", "Сообщение отправлено в игровой чат.")
     config.setdefault("online_response_path", "online")
     config.setdefault("chat_feed_url", "")
     config.setdefault("chat_feed_method", "GET")
@@ -61,6 +70,11 @@ def load_config():
     return config
 
 
+def save_config(config):
+    persisted = {key: value for key, value in config.items() if not str(key).startswith("_")}
+    save_json(CONFIG_PATH, persisted)
+
+
 def load_users():
     users = load_json(USERS_PATH, {})
     return users if isinstance(users, dict) else {}
@@ -70,25 +84,12 @@ def save_users(users):
     save_json(USERS_PATH, users)
 
 
-def save_config(config):
-    persisted = {key: value for key, value in config.items() if not str(key).startswith("_")}
-    save_json(CONFIG_PATH, persisted)
-
-
-def ensure_runtime_files():
-    if not USERS_PATH.exists():
-        save_json(USERS_PATH, {})
-
-
 def telegram_request(token, method, params=None):
     params = params or {}
     data = urllib.parse.urlencode(params).encode("utf-8")
-    url = f"https://api.telegram.org/bot{token}/{method}"
-    request = urllib.request.Request(url, data=data)
-
+    request = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=data)
     with urllib.request.urlopen(request, timeout=60) as response:
         payload = json.loads(response.read().decode("utf-8"))
-
     if not payload.get("ok"):
         raise RuntimeError(payload.get("description", f"Telegram API error in {method}"))
     return payload["result"]
@@ -101,22 +102,12 @@ def send_message(token, chat_id, text, message_thread_id=""):
     telegram_request(token, "sendMessage", params)
 
 
-def send_group_message(token, chat_id, text, message_thread_id=""):
-    params = {"chat_id": str(chat_id), "text": text}
-    if str(message_thread_id).strip():
-        params["message_thread_id"] = str(message_thread_id).strip()
-    telegram_request(token, "sendMessage", params)
-
-
 def delete_message(token, chat_id, message_id):
     try:
         telegram_request(
             token,
             "deleteMessage",
-            {
-                "chat_id": str(chat_id),
-                "message_id": str(message_id),
-            },
+            {"chat_id": str(chat_id), "message_id": str(message_id)},
         )
     except Exception:
         pass
@@ -125,7 +116,6 @@ def delete_message(token, chat_id, message_id):
 def send_http_request(url, method="GET", params=None):
     params = params or {}
     method = method.upper()
-
     if method == "GET":
         query = urllib.parse.urlencode(params)
         request_url = url if not query else f"{url}?{query}"
@@ -165,9 +155,8 @@ def build_help_text():
         "Пиши так:\n"
         "nick ваш_ник\n"
         "online\n"
-        "chat ваш_текст\n\n"
-        "Сначала один раз укажи ник.\n"
-        f"Кулдаун на chat и online: {COOLDOWN_SECONDS} секунд."
+        "chat ваш_текст\n"
+        "playtime top"
     )
 
 
@@ -186,10 +175,15 @@ def check_cooldown(last_usage, telegram_id):
     return True, 0
 
 
+def require_group(chat_type):
+    if chat_type not in {"group", "supergroup"}:
+        raise ValueError("Команды работают только в группе.")
+
+
 def handle_nick(config, users, chat_id, telegram_id, text):
     parts = text.split(" ", 1)
     if len(parts) < 2 or not parts[1].strip():
-        raise ValueError("Использование: /nick ваш_ник")
+        raise ValueError("Использование: nick ваш_ник")
 
     nickname = parts[1].strip()
     validate_nickname(nickname)
@@ -201,21 +195,19 @@ def handle_nick(config, users, chat_id, telegram_id, text):
 
     users[telegram_id] = {"nickname": nickname}
     save_users(users)
-    send_message(config["telegram_bot_token"], chat_id, f"Ник сохранен: {nickname}", config.get("_reply_thread_id", ""))
+    send_message(config["telegram_bot_token"], chat_id, f"Ник сохранён: {nickname}", config.get("_reply_thread_id", ""))
 
 
 def handle_mynick(config, users, chat_id, telegram_id):
-    user = users.get(telegram_id, {})
-    nickname = str(user.get("nickname", "")).strip()
+    nickname = str(users.get(telegram_id, {}).get("nickname", "")).strip()
     if not nickname:
-        send_message(config["telegram_bot_token"], chat_id, "Ник еще не сохранен. Используй: nick ваш_ник", config.get("_reply_thread_id", ""))
+        send_message(config["telegram_bot_token"], chat_id, "Ник ещё не сохранён. Используй: nick ваш_ник", config.get("_reply_thread_id", ""))
         return
     send_message(config["telegram_bot_token"], chat_id, f"Твой ник: {nickname}", config.get("_reply_thread_id", ""))
 
 
-def handle_mirides(config, users, chat_id, telegram_id, text):
-    user = users.get(telegram_id, {})
-    nickname = str(user.get("nickname", "")).strip()
+def handle_chat(config, users, chat_id, telegram_id, text):
+    nickname = str(users.get(telegram_id, {}).get("nickname", "")).strip()
     if not nickname:
         raise ValueError("Сначала добавь ник игрока: nick ваш_ник")
 
@@ -233,9 +225,8 @@ def handle_mirides(config, users, chat_id, telegram_id, text):
         params[config["mirides_token_field"]] = config["mirides_token"]
 
     response = send_http_request(config["mirides_url"], config["mirides_method"], params)
-    if isinstance(response, dict):
-        if response.get("ok") is False:
-            raise RuntimeError(response.get("error", "Не удалось отправить сообщение"))
+    if isinstance(response, dict) and response.get("ok") is False:
+        raise RuntimeError(response.get("error", "Не удалось отправить сообщение"))
 
     send_message(config["telegram_bot_token"], chat_id, f"{nickname}: {message}", config.get("_reply_thread_id", ""))
 
@@ -254,8 +245,12 @@ def handle_online(config, chat_id):
         online_count = response.get("online", online_value)
         players = response.get("players", [])
         if isinstance(players, list) and players:
-            players_text = ", ".join(str(player) for player in players)
-            send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count} | {players_text}", config.get("_reply_thread_id", ""))
+            send_message(
+                config["telegram_bot_token"],
+                chat_id,
+                f"Онлайн: {online_count} | {', '.join(str(player) for player in players)}",
+                config.get("_reply_thread_id", ""),
+            )
             return
         send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count}", config.get("_reply_thread_id", ""))
         return
@@ -263,13 +258,37 @@ def handle_online(config, chat_id):
     send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_value}", config.get("_reply_thread_id", ""))
 
 
+def handle_playtime_top(config, chat_id):
+    params = {"limit": int(config.get("playtime_top_limit", 10))}
+    if config.get("playtime_top_token"):
+        params[config["playtime_top_token_field"]] = config["playtime_top_token"]
+
+    response = send_http_request(config["playtime_top_url"], config["playtime_top_method"], params)
+    if not isinstance(response, dict) or response.get("ok") is False:
+        raise RuntimeError("Не удалось получить топ по плейтайму")
+
+    items = response.get("items", [])
+    if not items:
+        send_message(config["telegram_bot_token"], chat_id, "Топ по плейтайму пока пуст.", config.get("_reply_thread_id", ""))
+        return
+
+    lines = ["Топ по плейтайму:"]
+    for item in items:
+        place = item.get("place", 0)
+        player_name = str(item.get("playerName", "")).strip()
+        formatted = str(item.get("formattedPlaytime", "")).strip()
+        if not player_name or not formatted:
+            continue
+        lines.append(f"{place}. {player_name} — {formatted}")
+
+    send_message(config["telegram_bot_token"], chat_id, "\n".join(lines), config.get("_reply_thread_id", ""))
+
+
 def poll_chat_feed(config):
     if not config.get("chat_feed_url") or not config.get("chat_forward_chat_id"):
         return config
 
-    params = {
-        "after_id": int(config.get("chat_feed_after_id", 0)),
-    }
+    params = {"after_id": int(config.get("chat_feed_after_id", 0))}
     if config.get("chat_feed_token"):
         params[config["chat_feed_token_field"]] = config["chat_feed_token"]
 
@@ -286,20 +305,20 @@ def poll_chat_feed(config):
         message = str(item.get("message", "")).strip()
         if item_id <= 0 or not player_name or not message:
             continue
+
         dedupe_key = (player_name, message)
         if dedupe_key in sent_keys:
-            if item_id > max_id:
-                max_id = item_id
+            max_id = max(max_id, item_id)
             continue
         sent_keys.add(dedupe_key)
-        send_group_message(
+
+        send_message(
             config["telegram_bot_token"],
             config["chat_forward_chat_id"],
             f"Ⓣ {player_name} » {message}",
             config.get("chat_forward_thread_id", ""),
         )
-        if item_id > max_id:
-            max_id = item_id
+        max_id = max(max_id, item_id)
 
     if max_id != int(config.get("chat_feed_after_id", 0)):
         config["chat_feed_after_id"] = max_id
@@ -322,19 +341,18 @@ def process_message(config, users, message, last_usage):
     if not text:
         return
 
-    if chat_type not in {"group", "supergroup"}:
-        if lowered in {"help", "menu", "start"}:
-            send_message(token, chat_id, "Пиши команды только в группе.", message_thread_id)
-        return
-
     if lowered in {"help", "помощь", "menu", "меню", "start"}:
+        if chat_type not in {"group", "supergroup"}:
+            send_message(token, chat_id, "Пиши команды только в группе.", message_thread_id)
+            return
         send_message(token, chat_id, build_help_text(), message_thread_id)
         delete_message(token, chat_id, message_id)
         return
 
+    require_group(chat_type)
+
     if lowered.startswith("nick "):
-        normalized_text = "/nick " + text.split(" ", 1)[1]
-        handle_nick(config, users, chat_id, telegram_id, normalized_text)
+        handle_nick(config, users, chat_id, telegram_id, text)
         delete_message(token, chat_id, message_id)
         return
 
@@ -349,8 +367,7 @@ def process_message(config, users, message, last_usage):
             send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.", message_thread_id)
             delete_message(token, chat_id, message_id)
             return
-        command_text = "/mirides " + text.split(" ", 1)[1]
-        handle_mirides(config, users, chat_id, telegram_id, command_text)
+        handle_chat(config, users, chat_id, telegram_id, text)
         delete_message(token, chat_id, message_id)
         return
 
@@ -364,7 +381,14 @@ def process_message(config, users, message, last_usage):
         delete_message(token, chat_id, message_id)
         return
 
-    return
+    if lowered == "playtime top":
+        allowed, seconds_left = check_cooldown(last_usage, telegram_id)
+        if not allowed:
+            send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.", message_thread_id)
+            delete_message(token, chat_id, message_id)
+            return
+        handle_playtime_top(config, chat_id)
+        delete_message(token, chat_id, message_id)
 
 
 def main():
@@ -387,6 +411,7 @@ def main():
                 "getUpdates",
                 {"timeout": int(config["poll_timeout_seconds"]), "offset": offset},
             )
+
             for update in updates:
                 offset = update["update_id"] + 1
                 message = update.get("message")
@@ -395,11 +420,11 @@ def main():
                 try:
                     process_message(config, users, message, last_usage)
                 except ValueError as exc:
-                    send_message(token, message["chat"]["id"], str(exc))
+                    send_message(token, message["chat"]["id"], str(exc), str(message.get("message_thread_id", "")).strip())
                 except urllib.error.HTTPError as exc:
-                    send_message(token, message["chat"]["id"], f"Ошибка HTTP: {exc.code}")
+                    send_message(token, message["chat"]["id"], f"Ошибка HTTP: {exc.code}", str(message.get("message_thread_id", "")).strip())
                 except Exception as exc:
-                    send_message(token, message["chat"]["id"], f"Ошибка: {exc}")
+                    send_message(token, message["chat"]["id"], f"Ошибка: {exc}", str(message.get("message_thread_id", "")).strip())
         except Exception as exc:
             print(f"Bot loop error: {exc}")
             time.sleep(5)
