@@ -217,12 +217,17 @@ def handle_online(config, chat_id):
     if online_value is None or online_value == "":
         raise RuntimeError("Сервер не вернул онлайн")
 
-    if isinstance(online_value, (dict, list)):
-        text = json.dumps(online_value, ensure_ascii=False)
-    else:
-        text = str(online_value)
+    if isinstance(response, dict):
+        online_count = response.get("online", online_value)
+        players = response.get("players", [])
+        if isinstance(players, list) and players:
+            players_text = ", ".join(str(player) for player in players)
+            send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count} | {players_text}")
+            return
+        send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count}")
+        return
 
-    send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {text}")
+    send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_value}")
 
 
 def process_message(config, users, message, last_usage):
@@ -273,7 +278,7 @@ def process_message(config, users, message, last_usage):
         delete_message(token, chat_id, message_id)
         return
 
-    send_message(token, chat_id, build_help_text())
+    return
 
 
 def main():
