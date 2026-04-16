@@ -87,8 +87,11 @@ def telegram_request(token, method, params=None):
     return payload["result"]
 
 
-def send_message(token, chat_id, text):
-    telegram_request(token, "sendMessage", {"chat_id": str(chat_id), "text": text})
+def send_message(token, chat_id, text, message_thread_id=""):
+    params = {"chat_id": str(chat_id), "text": text}
+    if str(message_thread_id).strip():
+        params["message_thread_id"] = str(message_thread_id).strip()
+    telegram_request(token, "sendMessage", params)
 
 
 def send_group_message(token, chat_id, text, message_thread_id=""):
@@ -186,21 +189,21 @@ def handle_nick(config, users, chat_id, telegram_id, text):
 
     existing_nickname = str(users.get(telegram_id, {}).get("nickname", "")).strip()
     if existing_nickname:
-        send_message(config["telegram_bot_token"], chat_id, f"Ник уже привязан: {existing_nickname}")
+        send_message(config["telegram_bot_token"], chat_id, f"Ник уже привязан: {existing_nickname}", config.get("_reply_thread_id", ""))
         return
 
     users[telegram_id] = {"nickname": nickname}
     save_users(users)
-    send_message(config["telegram_bot_token"], chat_id, f"Ник сохранен: {nickname}")
+    send_message(config["telegram_bot_token"], chat_id, f"Ник сохранен: {nickname}", config.get("_reply_thread_id", ""))
 
 
 def handle_mynick(config, users, chat_id, telegram_id):
     user = users.get(telegram_id, {})
     nickname = str(user.get("nickname", "")).strip()
     if not nickname:
-        send_message(config["telegram_bot_token"], chat_id, "Ник еще не сохранен. Используй: nick ваш_ник")
+        send_message(config["telegram_bot_token"], chat_id, "Ник еще не сохранен. Используй: nick ваш_ник", config.get("_reply_thread_id", ""))
         return
-    send_message(config["telegram_bot_token"], chat_id, f"Твой ник: {nickname}")
+    send_message(config["telegram_bot_token"], chat_id, f"Твой ник: {nickname}", config.get("_reply_thread_id", ""))
 
 
 def handle_mirides(config, users, chat_id, telegram_id, text):
@@ -227,7 +230,7 @@ def handle_mirides(config, users, chat_id, telegram_id, text):
         if response.get("ok") is False:
             raise RuntimeError(response.get("error", "Не удалось отправить сообщение"))
 
-    send_message(config["telegram_bot_token"], chat_id, f"{nickname}: {message}")
+    send_message(config["telegram_bot_token"], chat_id, f"{nickname}: {message}", config.get("_reply_thread_id", ""))
 
 
 def handle_online(config, chat_id):
@@ -245,12 +248,12 @@ def handle_online(config, chat_id):
         players = response.get("players", [])
         if isinstance(players, list) and players:
             players_text = ", ".join(str(player) for player in players)
-            send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count} | {players_text}")
+            send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count} | {players_text}", config.get("_reply_thread_id", ""))
             return
-        send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count}")
+        send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count}", config.get("_reply_thread_id", ""))
         return
 
-    send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_value}")
+    send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_value}", config.get("_reply_thread_id", ""))
 
 
 def poll_chat_feed(config):
@@ -302,14 +305,16 @@ def process_message(config, users, message, last_usage):
     chat_id = message["chat"]["id"]
     telegram_id = str(message["from"]["id"])
     message_id = message["message_id"]
+    message_thread_id = str(message.get("message_thread_id", "")).strip()
     text = message.get("text", "").strip()
     lowered = text.lower()
+    config["_reply_thread_id"] = message_thread_id
 
     if not text:
         return
 
     if lowered in {"help", "помощь", "menu", "меню", "start"}:
-        send_message(token, chat_id, build_help_text())
+        send_message(token, chat_id, build_help_text(), message_thread_id)
         delete_message(token, chat_id, message_id)
         return
 
@@ -327,7 +332,7 @@ def process_message(config, users, message, last_usage):
     if lowered.startswith("chat "):
         allowed, seconds_left = check_cooldown(last_usage, telegram_id)
         if not allowed:
-            send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.")
+            send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.", message_thread_id)
             delete_message(token, chat_id, message_id)
             return
         command_text = "/mirides " + text.split(" ", 1)[1]
@@ -338,7 +343,7 @@ def process_message(config, users, message, last_usage):
     if lowered == "online":
         allowed, seconds_left = check_cooldown(last_usage, telegram_id)
         if not allowed:
-            send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.")
+            send_message(token, chat_id, f"Подожди {seconds_left} сек. перед следующей командой.", message_thread_id)
             delete_message(token, chat_id, message_id)
             return
         handle_online(config, chat_id)
