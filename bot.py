@@ -272,6 +272,13 @@ def poll_chat_feed(config):
     if not isinstance(response, dict):
         return config
 
+    latest_id = int(response.get("latestId", 0) or 0)
+    current_after_id = int(config.get("chat_feed_after_id", 0))
+    if response.get("resetSuggested") or current_after_id > latest_id:
+        config["chat_feed_after_id"] = latest_id
+        save_config(config)
+        return config
+
     items = response.get("items", [])
     max_id = int(config.get("chat_feed_after_id", 0))
     sent_keys = set()
