@@ -104,11 +104,7 @@ def send_message(token, chat_id, text, message_thread_id=""):
 
 def delete_message(token, chat_id, message_id):
     try:
-        telegram_request(
-            token,
-            "deleteMessage",
-            {"chat_id": str(chat_id), "message_id": str(message_id)},
-        )
+        telegram_request(token, "deleteMessage", {"chat_id": str(chat_id), "message_id": str(message_id)})
     except Exception:
         pass
 
@@ -151,13 +147,7 @@ def extract_value(payload, path):
 
 
 def build_help_text():
-    return (
-        "Пиши так:\n"
-        "nick ваш_ник\n"
-        "online\n"
-        "chat ваш_текст\n"
-        "playtime top"
-    )
+    return "Пиши так:\nnick ваш_ник\nonline\nchat ваш_текст\nplaytime top"
 
 
 def validate_nickname(nickname):
@@ -245,12 +235,7 @@ def handle_online(config, chat_id):
         online_count = response.get("online", online_value)
         players = response.get("players", [])
         if isinstance(players, list) and players:
-            send_message(
-                config["telegram_bot_token"],
-                chat_id,
-                f"Онлайн: {online_count} | {', '.join(str(player) for player in players)}",
-                config.get("_reply_thread_id", ""),
-            )
+            send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count} | {', '.join(str(player) for player in players)}", config.get("_reply_thread_id", ""))
             return
         send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count}", config.get("_reply_thread_id", ""))
         return
@@ -306,7 +291,7 @@ def poll_chat_feed(config):
         send_message(
             config["telegram_bot_token"],
             config["chat_forward_chat_id"],
-            f"Ⓣ {player_name} » {message}",
+            f"\u24c9 {player_name} \u00bb {message}",
             config.get("chat_forward_thread_id", ""),
         )
         max_id = max(max_id, item_id)
@@ -397,12 +382,7 @@ def main():
             except Exception as exc:
                 print(f"Chat feed poll error: {exc}")
 
-            updates = telegram_request(
-                token,
-                "getUpdates",
-                {"timeout": int(config["poll_timeout_seconds"]), "offset": offset},
-            )
-
+            updates = telegram_request(token, "getUpdates", {"timeout": int(config["poll_timeout_seconds"]), "offset": offset})
             for update in updates:
                 offset = update["update_id"] + 1
                 message = update.get("message")
