@@ -147,7 +147,17 @@ def extract_value(payload, path):
 
 
 def build_help_text():
-    return "Пиши так:\nnick ваш_ник\nonline\nchat ваш_текст\nplaytime top"
+    return (
+        "Пиши так:\n"
+        "nick ваш_ник\n"
+        "online\n"
+        "chat ваш_текст\n"
+        "playtime top\n\n"
+        "Для админов:\n"
+        "ban @username|id|nick\n"
+        "unban @username|id|nick\n"
+        "whois @username|id|nick"
+    )
 
 
 def validate_nickname(nickname):
@@ -170,6 +180,102 @@ def require_group(chat_type):
         raise ValueError("Команды работают только в группе.")
 
 
+def get_full_name(user_info):
+    first_name = str(user_info.get("first_name", "")).strip()
+    last_name = str(user_info.get("last_name", "")).strip()
+    return " ".join(part for part in [first_name, last_name] if part).strip()
+
+
+def update_user_record(users, telegram_user):
+    telegram_id = str(telegram_user.get("id"))
+    record = dict(users.get(telegram_id, {}))
+
+    username = str(telegram_user.get("username", "")).strip()
+    full_name = get_full_name(telegram_user)
+
+    record["telegram_id"] = telegram_id
+    record["telegram_username"] = username
+    record["telegram_username_normalized"] = username.lower()
+    record["telegram_name"] = full_name
+    record.setdefault("nickname", "")
+    record.setdefault("banned", False)
+
+    users[telegram_id] = record
+    return record
+
+
+def get_identity_text(record):
+    parts = []
+    nickname = str(record.get("nickname", "")).strip()
+    username = str(record.get("telegram_username", "")).strip()
+    full_name = str(record.get("telegram_name", "")).strip()
+    telegram_id = str(record.get("telegram_id", "")).strip()
+
+    if nickname:
+        parts.append(f"nick={nickname}")
+    if username:
+        parts.append(f"@{username}")
+    if full_name:
+        parts.append(full_name)
+    if telegram_id:
+        parts.append(f"id={telegram_id}")
+
+    return " | ".join(parts) if parts else "unknown user"
+
+
+def is_group_admin(token, chat_id, telegram_id):
+    member = telegram_request(token, "getChatMember", {"chat_id": str(chat_id), "user_id": str(telegram_id)})
+    return str(member.get("status", "")).lower() in {"creator", "administrator"}
+
+
+def require_admin(token, chat_id, telegram_id):
+    if not is_group_admin(token, chat_id, telegram_id):
+        raise ValueError("Эта команда только для админов.")
+
+
+def find_user_by_query(users, query):
+    normalized_query = str(query or "").strip()
+    if not normalized_query:
+        return None
+
+    if normalized_query.startswith("@"):
+        normalized_query = normalized_query[1:]
+
+    lowered_query = normalized_query.lower()
+    if normalized_query in users:
+        return users[normalized_query]
+
+    for record in users.values():
+        if str(record.get("telegram_id", "")).strip() == normalized_query:
+            return record
+        if str(record.get("nickname", "")).strip().lower() == lowered_query:
+            return record
+        if str(record.get("telegram_username_normalized", "")).strip() == lowered_query:
+            return record
+
+    return None
+
+
+def resolve_target_record(users, query, reply_message=None):
+    query = str(query or "").strip()
+    if query:
+        record = find_user_by_query(users, query)
+        if record:
+            return record
+
+    if reply_message and reply_message.get("from"):
+        reply_user = reply_message["from"]
+        reply_id = str(reply_user.get("id"))
+        return users.get(reply_id) or update_user_record(users, reply_user)
+
+    return None
+
+
+def ensure_not_banned(record):
+    if record and record.get("banned"):
+        raise ValueError("Ты заблокирован в боте.")
+
+
 def handle_nick(config, users, chat_id, telegram_id, text):
     parts = text.split(" ", 1)
     if len(parts) < 2 or not parts[1].strip():
@@ -183,7 +289,7 @@ def handle_nick(config, users, chat_id, telegram_id, text):
         send_message(config["telegram_bot_token"], chat_id, f"Ник уже привязан: {existing_nickname}", config.get("_reply_thread_id", ""))
         return
 
-    users[telegram_id] = {"nickname": nickname}
+    users[telegram_id]["nickname"] = nickname
     save_users(users)
     send_message(config["telegram_bot_token"], chat_id, f"Ник сохранён: {nickname}", config.get("_reply_thread_id", ""))
 
@@ -235,7 +341,12 @@ def handle_online(config, chat_id):
         online_count = response.get("online", online_value)
         players = response.get("players", [])
         if isinstance(players, list) and players:
-            send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count} | {', '.join(str(player) for player in players)}", config.get("_reply_thread_id", ""))
+            send_message(
+                config["telegram_bot_token"],
+                chat_id,
+                f"Онлайн: {online_count} | {', '.join(str(player) for player in players)}",
+                config.get("_reply_thread_id", ""),
+            )
             return
         send_message(config["telegram_bot_token"], chat_id, f"Онлайн: {online_count}", config.get("_reply_thread_id", ""))
         return
@@ -260,6 +371,45 @@ def handle_playtime_top(config, chat_id):
     send_message(config["telegram_bot_token"], chat_id, "\n".join(lines), config.get("_reply_thread_id", ""))
 
 
+def handle_whois(config, users, chat_id, query, reply_message):
+    record = resolve_target_record(users, query, reply_message)
+    if not record:
+        send_message(config["telegram_bot_token"], chat_id, "Пользователь не найден.", config.get("_reply_thread_id", ""))
+        return
+
+    banned_text = "да" if record.get("banned") else "нет"
+    send_message(
+        config["telegram_bot_token"],
+        chat_id,
+        f"{get_identity_text(record)}\nban={banned_text}",
+        config.get("_reply_thread_id", ""),
+    )
+
+
+def handle_ban(config, users, chat_id, query, reply_message):
+    record = resolve_target_record(users, query, reply_message)
+    if not record:
+        send_message(config["telegram_bot_token"], chat_id, "Кого банить не найдено.", config.get("_reply_thread_id", ""))
+        return
+
+    record["banned"] = True
+    users[str(record["telegram_id"])] = record
+    save_users(users)
+    send_message(config["telegram_bot_token"], chat_id, f"Забанен в боте: {get_identity_text(record)}", config.get("_reply_thread_id", ""))
+
+
+def handle_unban(config, users, chat_id, query, reply_message):
+    record = resolve_target_record(users, query, reply_message)
+    if not record:
+        send_message(config["telegram_bot_token"], chat_id, "Кого разбанить не найдено.", config.get("_reply_thread_id", ""))
+        return
+
+    record["banned"] = False
+    users[str(record["telegram_id"])] = record
+    save_users(users)
+    send_message(config["telegram_bot_token"], chat_id, f"Разбанен в боте: {get_identity_text(record)}", config.get("_reply_thread_id", ""))
+
+
 def poll_chat_feed(config):
     if not config.get("chat_feed_url") or not config.get("chat_forward_chat_id"):
         return config
@@ -280,7 +430,7 @@ def poll_chat_feed(config):
         return config
 
     items = response.get("items", [])
-    max_id = int(config.get("chat_feed_after_id", 0))
+    max_id = current_after_id
     sent_keys = set()
     for item in items:
         item_id = int(item.get("id", 0))
@@ -303,7 +453,7 @@ def poll_chat_feed(config):
         )
         max_id = max(max_id, item_id)
 
-    if max_id != int(config.get("chat_feed_after_id", 0)):
+    if max_id != current_after_id:
         config["chat_feed_after_id"] = max_id
         save_config(config)
     return config
@@ -314,12 +464,17 @@ def process_message(config, users, message, last_usage):
     chat = message["chat"]
     chat_id = chat["id"]
     chat_type = str(chat.get("type", "")).strip().lower()
-    telegram_id = str(message["from"]["id"])
+    telegram_user = message.get("from", {})
+    telegram_id = str(telegram_user["id"])
     message_id = message["message_id"]
     message_thread_id = str(message.get("message_thread_id", "")).strip()
+    reply_message = message.get("reply_to_message")
     text = message.get("text", "").strip()
     lowered = text.lower()
     config["_reply_thread_id"] = message_thread_id
+
+    user_record = update_user_record(users, telegram_user)
+    save_users(users)
 
     if not text:
         return
@@ -333,6 +488,28 @@ def process_message(config, users, message, last_usage):
         return
 
     require_group(chat_type)
+    ensure_not_banned(user_record)
+
+    if lowered.startswith("ban"):
+        require_admin(token, chat_id, telegram_id)
+        query = text[3:].strip()
+        handle_ban(config, users, chat_id, query, reply_message)
+        delete_message(token, chat_id, message_id)
+        return
+
+    if lowered.startswith("unban"):
+        require_admin(token, chat_id, telegram_id)
+        query = text[5:].strip()
+        handle_unban(config, users, chat_id, query, reply_message)
+        delete_message(token, chat_id, message_id)
+        return
+
+    if lowered.startswith("whois"):
+        require_admin(token, chat_id, telegram_id)
+        query = text[5:].strip()
+        handle_whois(config, users, chat_id, query, reply_message)
+        delete_message(token, chat_id, message_id)
+        return
 
     if lowered.startswith("nick "):
         handle_nick(config, users, chat_id, telegram_id, text)
