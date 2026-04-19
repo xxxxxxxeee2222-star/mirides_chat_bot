@@ -18,7 +18,7 @@
   "playtime_top_token": "MiridesBridge_25_03_2026_X7k9Qp",
   "playtime_top_token_field": "token",
   "playtime_top_limit": 10,
-  "poll_timeout_seconds": 2,
+  "poll_timeout_seconds": 1,
   "chat_feed_url": "http://45.93.200.14:18590/chat-feed",
   "chat_feed_method": "GET",
   "chat_feed_token": "MiridesBridge_25_03_2026_X7k9Qp",

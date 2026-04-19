@@ -11,6 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 USERS_PATH = BASE_DIR / "users.json"
 COOLDOWN_SECONDS = 10
+CHAT_FEED_POLL_INTERVAL_SECONDS = 0.7
 NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
 
 
@@ -256,6 +257,19 @@ def find_user_by_query(users, query):
     return None
 
 
+def is_nickname_taken(users, nickname, excluded_telegram_id=""):
+    normalized_nickname = str(nickname or "").strip().lower()
+    if not normalized_nickname:
+        return False
+
+    for telegram_id, record in users.items():
+        if excluded_telegram_id and str(telegram_id) == str(excluded_telegram_id):
+            continue
+        if str(record.get("nickname", "")).strip().lower() == normalized_nickname:
+            return True
+    return False
+
+
 def resolve_target_record(users, query, reply_message=None):
     query = str(query or "").strip()
     if query:
@@ -288,6 +302,9 @@ def handle_nick(config, users, chat_id, telegram_id, text):
     if existing_nickname:
         send_message(config["telegram_bot_token"], chat_id, f"Ник уже привязан: {existing_nickname}", config.get("_reply_thread_id", ""))
         return
+
+    if is_nickname_taken(users, nickname, telegram_id):
+        raise ValueError("Этот ник уже привязан к другому Telegram аккаунту.")
 
     users[telegram_id]["nickname"] = nickname
     save_users(users)
@@ -432,11 +449,17 @@ def poll_chat_feed(config):
     items = response.get("items", [])
     max_id = current_after_id
     sent_keys = set()
+    started_at_ms = int(config.get("_chat_feed_started_at_ms", 0) or 0)
     for item in items:
         item_id = int(item.get("id", 0))
         player_name = str(item.get("playerName", "")).strip()
         message = str(item.get("message", "")).strip()
+        item_timestamp = int(item.get("timestamp", 0) or 0)
         if item_id <= 0 or not player_name or not message:
+            continue
+
+        if started_at_ms and item_timestamp and item_timestamp < started_at_ms:
+            max_id = max(max_id, item_id)
             continue
 
         dedupe_key = (player_name, message)
@@ -558,11 +581,16 @@ def main():
     token = config["telegram_bot_token"]
     offset = 0
     last_usage = {}
+    last_chat_feed_poll = 0.0
+    config["_chat_feed_started_at_ms"] = int(time.time() * 1000)
 
     while True:
         try:
             try:
-                config = poll_chat_feed(config)
+                now = time.monotonic()
+                if now - last_chat_feed_poll >= CHAT_FEED_POLL_INTERVAL_SECONDS:
+                    config = poll_chat_feed(config)
+                    last_chat_feed_poll = now
             except Exception as exc:
                 print(f"Chat feed poll error: {exc}")
 
@@ -580,6 +608,14 @@ def main():
                     send_message(token, message["chat"]["id"], f"Ошибка HTTP: {exc.code}", str(message.get("message_thread_id", "")).strip())
                 except Exception as exc:
                     send_message(token, message["chat"]["id"], f"Ошибка: {exc}", str(message.get("message_thread_id", "")).strip())
+
+            try:
+                now = time.monotonic()
+                if now - last_chat_feed_poll >= CHAT_FEED_POLL_INTERVAL_SECONDS:
+                    config = poll_chat_feed(config)
+                    last_chat_feed_poll = now
+            except Exception as exc:
+                print(f"Chat feed poll error: {exc}")
         except Exception as exc:
             print(f"Bot loop error: {exc}")
             time.sleep(5)
