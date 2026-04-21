@@ -11,10 +11,14 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 USERS_PATH = BASE_DIR / "users.json"
 ADMINS_PATH = BASE_DIR / "admins.json"
+
 COOLDOWN_SECONDS = 10
 CHAT_FEED_POLL_INTERVAL_SECONDS = 0.7
+
 NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
-LOST_CONNECTION_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*([A-Za-z0-9_]{3,16})\[[^\]]+\]\s+lost connection:.*$")
+LOST_CONNECTION_PATTERN = re.compile(
+    r"^\[[^\]]+\]:\s*([A-Za-z0-9_]{3,16})(?:\[[^\]]+\])?\s+lost connection:.*$"
+)
 
 
 def load_json(path, default):
@@ -446,10 +450,20 @@ def poll_server_log(config):
 
     log_path = Path(str(config.get("server_log_path", "")).strip())
     if not log_path.exists() or not log_path.is_file():
+        if not config.get("_server_log_missing_reported"):
+            print(f"Server log not found: {log_path}")
+            config["_server_log_missing_reported"] = True
         return config
+
+    if config.get("_server_log_missing_reported"):
+        print(f"Server log found again: {log_path}")
+        config["_server_log_missing_reported"] = False
 
     position = int(config.get("_server_log_position", 0) or 0)
     if position <= 0:
+        if not config.get("_server_log_started_reported"):
+            print(f"Watching server log: {log_path}")
+            config["_server_log_started_reported"] = True
         config["_server_log_position"] = log_path.stat().st_size
         return config
 
@@ -457,24 +471,21 @@ def poll_server_log(config):
     if file_size < position:
         position = 0
 
-    sent = False
     with log_path.open("r", encoding="utf-8", errors="ignore") as file:
         file.seek(position)
         for raw_line in file:
             line = raw_line.strip()
             text = parse_join_quit_line(line)
             if text:
+                print(f"Detected join/quit line: {line}")
                 send_message(
                     config["telegram_bot_token"],
                     config["chat_forward_chat_id"],
                     text,
                     config.get("chat_forward_thread_id", ""),
                 )
-                sent = True
         config["_server_log_position"] = file.tell()
 
-    if sent:
-        return config
     return config
 
 
@@ -549,7 +560,7 @@ def poll_chat_feed(config):
         send_message(
             config["telegram_bot_token"],
             config["chat_forward_chat_id"],
-            f"\u24c9 {player_name} \u00bb {message}",
+            f"Ⓣ {player_name} » {message}",
             config.get("chat_forward_thread_id", ""),
         )
         max_id = max(max_id, item_id)
@@ -662,6 +673,7 @@ def main():
     last_usage = {}
     last_chat_feed_poll = 0.0
     config["_chat_feed_started_at_ms"] = int(time.time() * 1000)
+
     try:
         log_path = Path(str(config.get("server_log_path", "")).strip())
         if log_path.exists() and log_path.is_file():
