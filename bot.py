@@ -14,9 +14,9 @@ ADMINS_PATH = BASE_DIR / "admins.json"
 COOLDOWN_SECONDS = 10
 CHAT_FEED_POLL_INTERVAL_SECONDS = 0.7
 NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
-JOIN_PREFIX_PATTERN = re.compile(r"^\[[^\]]+\]:\s*\+\s+([A-Za-z0-9_]{3,16})\s*$")
-QUIT_PREFIX_PATTERN = re.compile(r"^\[[^\]]+\]:\s*-\s+([A-Za-z0-9_]{3,16})\s*$")
-LOST_CONNECTION_PATTERN = re.compile(r"^\[[^\]]+\]:\s*([A-Za-z0-9_]{3,16})\[[^\]]+\]\s+lost connection:.*$")
+JOIN_PREFIX_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*\+\s+([A-Za-z0-9_]{3,16})\s*$")
+QUIT_PREFIX_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*-\s+([A-Za-z0-9_]{3,16})\s*$")
+LOST_CONNECTION_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*([A-Za-z0-9_]{3,16})\[[^\]]+\]\s+lost connection:.*$")
 
 
 def load_json(path, default):
