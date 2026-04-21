@@ -10,9 +10,13 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 USERS_PATH = BASE_DIR / "users.json"
+ADMINS_PATH = BASE_DIR / "admins.json"
 COOLDOWN_SECONDS = 10
 CHAT_FEED_POLL_INTERVAL_SECONDS = 0.7
 NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
+JOIN_PREFIX_PATTERN = re.compile(r"^\[[^\]]+\]:\s*\+\s+([A-Za-z0-9_]{3,16})\s*$")
+QUIT_PREFIX_PATTERN = re.compile(r"^\[[^\]]+\]:\s*-\s+([A-Za-z0-9_]{3,16})\s*$")
+LOST_CONNECTION_PATTERN = re.compile(r"^\[[^\]]+\]:\s*([A-Za-z0-9_]{3,16})\[[^\]]+\]\s+lost connection:.*$")
 
 
 def load_json(path, default):
@@ -36,6 +40,8 @@ def save_json(path, data):
 def ensure_runtime_files():
     if not USERS_PATH.exists():
         save_json(USERS_PATH, {})
+    if not ADMINS_PATH.exists():
+        save_json(ADMINS_PATH, {"admin_ids": []})
 
 
 def load_config():
@@ -45,7 +51,7 @@ def load_config():
     if missing:
         raise RuntimeError("В config.json не заполнены обязательные поля: " + ", ".join(missing))
 
-    config.setdefault("poll_timeout_seconds", 2)
+    config.setdefault("poll_timeout_seconds", 1)
     config.setdefault("mirides_method", "POST")
     config.setdefault("online_method", "GET")
     config.setdefault("playtime_top_url", config["online_url"].rsplit("/", 1)[0] + "/playtime-top")
@@ -68,6 +74,8 @@ def load_config():
     config.setdefault("chat_feed_after_id", 0)
     config.setdefault("chat_forward_chat_id", "")
     config.setdefault("chat_forward_thread_id", "")
+    config.setdefault("server_log_path", "/server/logs/latest.log")
+    config.setdefault("forward_join_quit", True)
     return config
 
 
@@ -83,6 +91,16 @@ def load_users():
 
 def save_users(users):
     save_json(USERS_PATH, users)
+
+
+def load_admins():
+    admins = load_json(ADMINS_PATH, {"admin_ids": []})
+    if not isinstance(admins, dict):
+        return {"admin_ids": []}
+    admin_ids = admins.get("admin_ids", [])
+    if not isinstance(admin_ids, list):
+        admin_ids = []
+    return {"admin_ids": [str(admin_id).strip() for admin_id in admin_ids if str(admin_id).strip()]}
 
 
 def telegram_request(token, method, params=None):
@@ -155,9 +173,9 @@ def build_help_text():
         "chat ваш_текст\n"
         "playtime top\n\n"
         "Для админов:\n"
-        "ban @username|id|nick\n"
-        "unban @username|id|nick\n"
-        "whois @username|id|nick"
+        "bantgbot @username|id|nick\n"
+        "unbantgbot @username|id|nick\n"
+        "whoistgbot @username|id|nick"
     )
 
 
@@ -179,6 +197,11 @@ def check_cooldown(last_usage, telegram_id):
 def require_group(chat_type):
     if chat_type not in {"group", "supergroup"}:
         raise ValueError("Команды работают только в группе.")
+
+
+def require_admin(admins, telegram_id):
+    if str(telegram_id) not in admins.get("admin_ids", []):
+        raise ValueError("Эта команда только для админов из admins.json.")
 
 
 def get_full_name(user_info):
@@ -222,16 +245,6 @@ def get_identity_text(record):
         parts.append(f"id={telegram_id}")
 
     return " | ".join(parts) if parts else "unknown user"
-
-
-def is_group_admin(token, chat_id, telegram_id):
-    member = telegram_request(token, "getChatMember", {"chat_id": str(chat_id), "user_id": str(telegram_id)})
-    return str(member.get("status", "")).lower() in {"creator", "administrator"}
-
-
-def require_admin(token, chat_id, telegram_id):
-    if not is_group_admin(token, chat_id, telegram_id):
-        raise ValueError("Эта команда только для админов.")
 
 
 def find_user_by_query(users, query):
@@ -427,6 +440,62 @@ def handle_unban(config, users, chat_id, query, reply_message):
     send_message(config["telegram_bot_token"], chat_id, f"Разбанен в боте: {get_identity_text(record)}", config.get("_reply_thread_id", ""))
 
 
+def poll_server_log(config):
+    if not config.get("forward_join_quit"):
+        return config
+    if not config.get("chat_forward_chat_id"):
+        return config
+
+    log_path = Path(str(config.get("server_log_path", "")).strip())
+    if not log_path.exists() or not log_path.is_file():
+        return config
+
+    position = int(config.get("_server_log_position", 0) or 0)
+    if position <= 0:
+        config["_server_log_position"] = log_path.stat().st_size
+        return config
+
+    file_size = log_path.stat().st_size
+    if file_size < position:
+        position = 0
+
+    sent = False
+    with log_path.open("r", encoding="utf-8", errors="ignore") as file:
+        file.seek(position)
+        for raw_line in file:
+            line = raw_line.strip()
+            text = parse_join_quit_line(line)
+            if text:
+                send_message(
+                    config["telegram_bot_token"],
+                    config["chat_forward_chat_id"],
+                    text,
+                    config.get("chat_forward_thread_id", ""),
+                )
+                sent = True
+        config["_server_log_position"] = file.tell()
+
+    if sent:
+        return config
+    return config
+
+
+def parse_join_quit_line(line):
+    match = JOIN_PREFIX_PATTERN.match(line)
+    if match:
+        return f"↗ {match.group(1)} вошёл на сервер"
+
+    match = QUIT_PREFIX_PATTERN.match(line)
+    if match:
+        return f"↘ {match.group(1)} вышел с сервера"
+
+    match = LOST_CONNECTION_PATTERN.match(line)
+    if match:
+        return f"↘ {match.group(1)} вышел с сервера"
+
+    return ""
+
+
 def poll_chat_feed(config):
     if not config.get("chat_feed_url") or not config.get("chat_forward_chat_id"):
         return config
@@ -482,7 +551,7 @@ def poll_chat_feed(config):
     return config
 
 
-def process_message(config, users, message, last_usage):
+def process_message(config, users, admins, message, last_usage):
     token = config["telegram_bot_token"]
     chat = message["chat"]
     chat_id = chat["id"]
@@ -513,23 +582,23 @@ def process_message(config, users, message, last_usage):
     require_group(chat_type)
     ensure_not_banned(user_record)
 
-    if lowered.startswith("ban"):
-        require_admin(token, chat_id, telegram_id)
-        query = text[3:].strip()
+    if lowered.startswith("bantgbot"):
+        require_admin(admins, telegram_id)
+        query = text[len("bantgbot"):].strip()
         handle_ban(config, users, chat_id, query, reply_message)
         delete_message(token, chat_id, message_id)
         return
 
-    if lowered.startswith("unban"):
-        require_admin(token, chat_id, telegram_id)
-        query = text[5:].strip()
+    if lowered.startswith("unbantgbot"):
+        require_admin(admins, telegram_id)
+        query = text[len("unbantgbot"):].strip()
         handle_unban(config, users, chat_id, query, reply_message)
         delete_message(token, chat_id, message_id)
         return
 
-    if lowered.startswith("whois"):
-        require_admin(token, chat_id, telegram_id)
-        query = text[5:].strip()
+    if lowered.startswith("whoistgbot"):
+        require_admin(admins, telegram_id)
+        query = text[len("whoistgbot"):].strip()
         handle_whois(config, users, chat_id, query, reply_message)
         delete_message(token, chat_id, message_id)
         return
@@ -578,11 +647,20 @@ def main():
     ensure_runtime_files()
     config = load_config()
     users = load_users()
+    admins = load_admins()
     token = config["telegram_bot_token"]
     offset = 0
     last_usage = {}
     last_chat_feed_poll = 0.0
     config["_chat_feed_started_at_ms"] = int(time.time() * 1000)
+    try:
+        log_path = Path(str(config.get("server_log_path", "")).strip())
+        if log_path.exists() and log_path.is_file():
+            config["_server_log_position"] = log_path.stat().st_size
+        else:
+            config["_server_log_position"] = 0
+    except OSError:
+        config["_server_log_position"] = 0
 
     while True:
         try:
@@ -590,6 +668,7 @@ def main():
                 now = time.monotonic()
                 if now - last_chat_feed_poll >= CHAT_FEED_POLL_INTERVAL_SECONDS:
                     config = poll_chat_feed(config)
+                    config = poll_server_log(config)
                     last_chat_feed_poll = now
             except Exception as exc:
                 print(f"Chat feed poll error: {exc}")
@@ -601,7 +680,7 @@ def main():
                 if not message:
                     continue
                 try:
-                    process_message(config, users, message, last_usage)
+                    process_message(config, users, admins, message, last_usage)
                 except ValueError as exc:
                     send_message(token, message["chat"]["id"], str(exc), str(message.get("message_thread_id", "")).strip())
                 except urllib.error.HTTPError as exc:
@@ -613,6 +692,7 @@ def main():
                 now = time.monotonic()
                 if now - last_chat_feed_poll >= CHAT_FEED_POLL_INTERVAL_SECONDS:
                     config = poll_chat_feed(config)
+                    config = poll_server_log(config)
                     last_chat_feed_poll = now
             except Exception as exc:
                 print(f"Chat feed poll error: {exc}")

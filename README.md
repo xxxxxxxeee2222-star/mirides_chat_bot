@@ -1,6 +1,6 @@
 # TelegramMiridesBot
 
-Пиши в группе только так:
+Пиши в группе так:
 
 ```text
 nick ваш_ник
@@ -9,37 +9,39 @@ chat ваш_текст
 playtime top
 ```
 
-Примеры:
+Админские команды без конфликта с Iris:
 
 ```text
-nick Kuni_Masterr
-online
-chat всем привет
-playtime top
+bantgbot @username|id|nick
+unbantgbot @username|id|nick
+whoistgbot @username|id|nick
 ```
 
-Для админов:
+Можно и ответом на сообщение пользователя:
 
 ```text
-whois @username
-whois nick
-ban @username
-ban nick
-unban @username
+bantgbot
+unbantgbot
+whoistgbot
 ```
 
-Можно банить и по ответу на сообщение пользователя:
+Админы задаются в отдельном файле:
+[admins.json](/C:/Users/cekta/Desktop/пвпвап/TelegramMiridesBot/admins.json)
 
-```text
-ban
-unban
-whois
+Пример:
+
+```json
+{
+  "admin_ids": [
+    "123456789"
+  ]
+}
 ```
 
-Что делает бот:
-- `nick` сохраняет игровой ник и привязку к Telegram ID / username;
+Что умеет бот:
+- `nick` сохраняет игровой ник и привязку к Telegram;
 - `online` показывает онлайн сервера;
-- `chat` отправляет сообщение в Minecraft-чат;
+- `chat` отправляет сообщение в Minecraft;
 - `playtime top` показывает топ по плейтайму;
-- `whois` показывает `nick`, `@username`, имя и `telegram id`;
-- `ban` и `unban` блокируют или разблокируют человека только внутри бота.
+- `whoistgbot` показывает `nick`, `@username`, имя и `telegram id`;
+- `bantgbot` и `unbantgbot` блокируют или разблокируют человека только внутри бота.
