@@ -14,8 +14,6 @@ ADMINS_PATH = BASE_DIR / "admins.json"
 COOLDOWN_SECONDS = 10
 CHAT_FEED_POLL_INTERVAL_SECONDS = 0.7
 NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
-JOIN_PREFIX_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*\+\s+([A-Za-z0-9_]{3,16})\s*$")
-QUIT_PREFIX_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*-\s+([A-Za-z0-9_]{3,16})\s*$")
 LOST_CONNECTION_PATTERN = re.compile(r"^\[?[0-9:\sA-Z]+\]?:?\s*([A-Za-z0-9_]{3,16})\[[^\]]+\]\s+lost connection:.*$")
 
 
@@ -481,18 +479,29 @@ def poll_server_log(config):
 
 
 def parse_join_quit_line(line):
-    match = JOIN_PREFIX_PATTERN.match(line)
-    if match:
-        return f"↗ {match.group(1)} вошёл на сервер"
+    player_name = extract_player_from_simple_marker(line, "+")
+    if player_name:
+        return f"↗ {player_name} вошёл на сервер"
 
-    match = QUIT_PREFIX_PATTERN.match(line)
-    if match:
-        return f"↘ {match.group(1)} вышел с сервера"
+    player_name = extract_player_from_simple_marker(line, "-")
+    if player_name:
+        return f"↘ {player_name} вышел с сервера"
 
     match = LOST_CONNECTION_PATTERN.match(line)
     if match:
         return f"↘ {match.group(1)} вышел с сервера"
 
+    return ""
+
+
+def extract_player_from_simple_marker(line, marker):
+    marker_with_spaces = f" {marker} "
+    if marker_with_spaces not in line:
+        return ""
+
+    candidate = line.rsplit(marker_with_spaces, 1)[-1].strip()
+    if re.fullmatch(r"[A-Za-z0-9_]{3,16}", candidate):
+        return candidate
     return ""
 
 
