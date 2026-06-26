@@ -16,6 +16,7 @@
   "online_response_path": "online",
   "playtime_top_url": "http://YOUR_SERVER_IP:18590/playtime-top",
   "playtime_top_method": "GET",
+  "playtime_top_body_format": "json",
   "playtime_top_token": "CHANGE_ME_SECRET_TOKEN",
   "playtime_top_token_field": "token",
   "playtime_top_limit": 10,

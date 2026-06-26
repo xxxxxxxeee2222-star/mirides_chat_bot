@@ -67,11 +67,273 @@ def load_config():
     config.setdefault("mirides_body_format", "json")
     config.setdefault("online_body_format", "json")
     config.setdefault("chat_feed_body_format", "json")
+    config.setdefault("playtime_top_url", "")
+    config.setdefault("playtime_top_method", "GET")
+    config.setdefault("playtime_top_body_format", "json")
+    config.setdefault("playtime_top_token", "")
+    config.setdefault("playtime_top_token_field", "token")
+    config.setdefault("playtime_top_limit", 10)
+    config.setdefault("forward_join_quit", True)
     return config
 
 def save_config(config):
     persisted = {key: value for key, value in config.items() if not str(key).startswith("_")}
     save_json(CONFIG_PATH, persisted)
+
+def load_users():
+    return load_json(USERS_PATH, {})
+
+def save_users(users):
+    save_json(USERS_PATH, users)
+
+def load_admin_ids():
+    data = load_json(ADMINS_PATH, {"admin_ids": []})
+    return {str(item) for item in data.get("admin_ids", [])}
+
+def normalize_username(username):
+    return str(username or "").strip().lstrip("@").lower()
+
+def ensure_user_record(users, telegram_id, telegram_username="", telegram_name=""):
+    telegram_id = str(telegram_id)
+    record = users.get(telegram_id, {})
+    record["telegram_id"] = telegram_id
+    record["telegram_username"] = telegram_username or record.get("telegram_username", "")
+    record["telegram_username_normalized"] = normalize_username(telegram_username or record.get("telegram_username", ""))
+    record["telegram_name"] = telegram_name or record.get("telegram_name", "")
+    record.setdefault("nickname", "")
+    record.setdefault("banned", False)
+    users[telegram_id] = record
+    return record
+
+def find_user_record(users, query):
+    query = str(query or "").strip()
+    if not query:
+        return None
+
+    if query.startswith("@"):
+        query = query[1:]
+
+    if query in users:
+        return users[query]
+
+    normalized_query = query.lower()
+    for record in users.values():
+        if normalize_username(record.get("telegram_username")) == normalized_query:
+            return record
+        if str(record.get("nickname", "")).lower() == normalized_query:
+            return record
+        if str(record.get("telegram_name", "")).lower() == normalized_query:
+            return record
+
+    for record in users.values():
+        haystack = " ".join([
+            str(record.get("telegram_username", "")),
+            str(record.get("nickname", "")),
+            str(record.get("telegram_name", "")),
+            str(record.get("telegram_id", "")),
+        ]).lower()
+        if normalized_query in haystack:
+            return record
+
+    return None
+
+def is_admin_user(telegram_id):
+    return str(telegram_id) in load_admin_ids()
+
+def parse_command_text(text):
+    raw = str(text or "").strip()
+    if not raw:
+        return "", ""
+
+    if raw.startswith("/"):
+        raw = raw[1:]
+        if "@" in raw:
+            raw = raw.split("@", 1)[0]
+
+    parts = raw.split(None, 1)
+    command = parts[0].lower()
+    argument = parts[1].strip() if len(parts) > 1 else ""
+
+    if command == "playtime" and argument.lower() == "top":
+        return "playtime top", ""
+
+    return command, argument
+
+def resolve_target_user(users, msg, argument, allow_self_when_missing=True):
+    if msg.get("reply_to_message") and isinstance(msg["reply_to_message"], dict):
+        replied_from = msg["reply_to_message"].get("from", {})
+        replied_id = str(replied_from.get("id", ""))
+        if replied_id:
+            return ensure_user_record(
+                users,
+                replied_id,
+                replied_from.get("username", ""),
+                replied_from.get("first_name", "User"),
+            )
+
+    if argument:
+        record = find_user_record(users, argument)
+        if record:
+            return record
+        if argument.isdigit():
+            return ensure_user_record(users, argument)
+        return None
+
+    if not allow_self_when_missing:
+        return None
+
+    from_user = msg.get("from", {})
+    return ensure_user_record(
+        users,
+        from_user.get("id", ""),
+        from_user.get("username", ""),
+        from_user.get("first_name", "User"),
+    )
+
+def format_user_info(record):
+    username = record.get("telegram_username", "")
+    username_text = f"@{username}" if username else "no username"
+    nickname = record.get("nickname", "") or "no nick"
+    name = record.get("telegram_name", "") or "no name"
+    banned = "yes" if record.get("banned") else "no"
+    return (
+        f"Telegram ID: {record.get('telegram_id', '')}\n"
+        f"Username: {username_text}\n"
+        f"Name: {name}\n"
+        f"Minecraft nick: {nickname}\n"
+        f"Banned: {banned}"
+    )
+
+async def handle_telegram_command(config, msg, text, chat_id, thread_id):
+    users = load_users()
+    from_user = msg.get("from", {})
+    sender_id = str(from_user.get("id", ""))
+    sender_record = ensure_user_record(
+        users,
+        sender_id,
+        from_user.get("username", ""),
+        from_user.get("first_name", "User"),
+    )
+    command, argument = parse_command_text(text)
+    if not command:
+        return False
+
+    if sender_record.get("banned") and command not in {"whoistgbot"}:
+        return True
+
+    token = config["telegram_bot_token"]
+
+    if command == "online":
+        params = {config["online_token_field"]: config["online_token"]}
+        res = send_http_request(
+            config["online_url"],
+            method=config["online_method"],
+            params=params,
+            body_format=config.get("online_body_format", "json"),
+        )
+        players = extract_value(res, config["online_response_path"])
+        if isinstance(players, list) and players:
+            players_text = ", ".join(str(p) for p in players)
+        elif isinstance(players, dict) and "list" in players:
+            players_text = ", ".join(str(p) for p in players["list"])
+        elif isinstance(players, int):
+            players_text = f"{players} players online"
+        else:
+            players_text = "На сервере никого нет."
+        send_message(token, chat_id, f"🎮 Онлайн: {players_text}", message_thread_id=thread_id)
+        return True
+
+    if command == "playtime top":
+        if not config.get("playtime_top_url"):
+            send_message(token, chat_id, "Playtime endpoint is not configured.", message_thread_id=thread_id)
+            return True
+
+        params = {config["playtime_top_token_field"]: config["playtime_top_token"]}
+        limit = config.get("playtime_top_limit", 10)
+        if limit not in (None, ""):
+            params["limit"] = limit
+        res = send_http_request(
+            config["playtime_top_url"],
+            method=config["playtime_top_method"],
+            params=params,
+            body_format=config.get("playtime_top_body_format", "json"),
+        )
+        if isinstance(res, dict) and isinstance(res.get("lines"), list):
+            lines = [str(line) for line in res["lines"]]
+            send_message(token, chat_id, "\n".join(lines), message_thread_id=thread_id)
+        elif isinstance(res, list):
+            send_message(token, chat_id, "\n".join(str(line) for line in res), message_thread_id=thread_id)
+        else:
+            send_message(token, chat_id, str(res), message_thread_id=thread_id)
+        return True
+
+    if command == "nick":
+        nickname = argument.strip()
+        if not nickname:
+            current = sender_record.get("nickname", "")
+            if current:
+                send_message(token, chat_id, f"Current nick: {current}", message_thread_id=thread_id)
+            else:
+                send_message(token, chat_id, "Usage: nick <minecraft_nick>", message_thread_id=thread_id)
+            return True
+
+        if not NICKNAME_PATTERN.fullmatch(nickname):
+            send_message(token, chat_id, "Nick must be 3-16 chars: letters, numbers, underscore.", message_thread_id=thread_id)
+            return True
+
+        sender_record["nickname"] = nickname
+        users[sender_id] = sender_record
+        save_users(users)
+        send_message(token, chat_id, f"Nick saved: {nickname}", message_thread_id=thread_id)
+        return True
+
+    if command == "chat":
+        message = argument.strip()
+        if not message:
+            send_message(token, chat_id, "Usage: chat <message>", message_thread_id=thread_id)
+            return True
+
+        nickname = sender_record.get("nickname") or from_user.get("username") or from_user.get("first_name", "User")
+        payload = {
+            config["mirides_token_field"]: config["mirides_token"],
+            config["mirides_nickname_field"]: nickname,
+            config["mirides_message_field"]: message,
+        }
+        send_http_request(
+            config["mirides_url"],
+            method=config["mirides_method"],
+            params=payload,
+            body_format=config.get("mirides_body_format", "json"),
+        )
+        send_message(token, chat_id, "Sent to Minecraft.", message_thread_id=thread_id)
+        return True
+
+    if command == "whoistgbot":
+        target = resolve_target_user(users, msg, argument, allow_self_when_missing=True)
+        if target is None:
+            send_message(token, chat_id, "Target user not found.", message_thread_id=thread_id)
+            return True
+        send_message(token, chat_id, format_user_info(target), message_thread_id=thread_id)
+        return True
+
+    if command in {"bantgbot", "unbantgbot"}:
+        if not is_admin_user(sender_id):
+            send_message(token, chat_id, "No admin rights.", message_thread_id=thread_id)
+            return True
+
+        target = resolve_target_user(users, msg, argument, allow_self_when_missing=False)
+        if not target.get("telegram_id"):
+            send_message(token, chat_id, "Target user not found.", message_thread_id=thread_id)
+            return True
+
+        target["banned"] = command == "bantgbot"
+        users[str(target["telegram_id"])] = target
+        save_users(users)
+        state = "banned" if target["banned"] else "unbanned"
+        send_message(token, chat_id, f"{state}: {format_user_info(target)}", message_thread_id=thread_id)
+        return True
+
+    return False
 
 def telegram_request(token, method, params=None):
     params = params or {}
@@ -166,25 +428,12 @@ async def telegram_polling_loop(config):
                     text = msg["text"].strip()
                     chat_id = msg["chat"]["id"]
                     thread_id = normalize_thread_id(msg.get("message_thread_id"))
-                    
-                    # РћР±СЂР°Р±РѕС‚РєР° РєРѕРјР°РЅРґС‹ online
-                    if text.lower() == "online":
-                        print("[+] РћР±СЂР°Р±РѕС‚РєР° РєРѕРјР°РЅРґС‹ online...")
-                        params = {config["online_token_field"]: config["online_token"]}
-                        res = send_http_request(config["online_url"], method=config["online_method"], params=params, body_format=config.get("online_body_format", "json"))
-                        players = extract_value(res, config["online_response_path"])
-                        
-                        if isinstance(players, list) and players:
-                            players_text = ", ".join(str(p) for p in players)
-                        elif isinstance(players, dict) and "list" in players:
-                            players_text = ", ".join(str(p) for p in players["list"])
-                        else:
-                            players_text = "РќР° СЃРµСЂРІРµСЂРµ РЅРёРєРѕРіРѕ РЅРµС‚."
-                            
-                        send_message(token, chat_id, f"рџЋ® РћРЅР»Р°Р№РЅ: {players_text}")
+                    handled = await handle_telegram_command(config, msg, text, chat_id, thread_id)
+                    if handled:
+                        continue
                     
                     # РџРµСЂРµСЃС‹Р»РєР° СЃРѕРѕР±С‰РµРЅРёСЏ РёР· РўР“ РІ С‡Р°С‚ РёРіСЂС‹
-                    elif str(chat_id) == str(config["chat_forward_chat_id"]):
+                    if str(chat_id) == str(config["chat_forward_chat_id"]):
                         if configured_thread_id and thread_id != configured_thread_id:
                             continue
 
@@ -192,7 +441,15 @@ async def telegram_polling_loop(config):
                         if text.startswith("/"):
                             continue
                             
-                        nickname = msg["from"].get("username") or msg["from"].get("first_name", "User")
+                        users = load_users()
+                        sender = msg["from"]
+                        sender_record = ensure_user_record(
+                            users,
+                            sender.get("id", ""),
+                            sender.get("username", ""),
+                            sender.get("first_name", "User"),
+                        )
+                        nickname = sender_record.get("nickname") or sender.get("username") or sender.get("first_name", "User")
                         payload = {
                             config["mirides_token_field"]: config["mirides_token"],
                             config["mirides_nickname_field"]: nickname,
