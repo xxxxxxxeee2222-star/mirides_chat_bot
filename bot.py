@@ -53,7 +53,7 @@ def load_config():
     config.setdefault("mirides_token_field", "token")
     config.setdefault("mirides_message_field", "message")
     config.setdefault("mirides_nickname_field", "nickname")
-    config.setdefault("mirides_body_format", "json")
+    config.setdefault("mirides_body_format", "form")
     config.setdefault("online_method", "GET")
     config.setdefault("online_token", "")
     config.setdefault("online_token_field", "token")
@@ -291,6 +291,7 @@ async def handle_telegram_command(config, msg, text, chat_id, thread_id):
         return False
 
     token = config["telegram_bot_token"]
+    print(f"[+] Command received: {command} arg={argument!r} from={sender_id}")
 
     if command == "online":
         try:
