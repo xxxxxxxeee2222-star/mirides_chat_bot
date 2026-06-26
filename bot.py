@@ -226,11 +226,25 @@ async def minecraft_polling_loop(config):
                 }
                 res = send_http_request(config["chat_feed_url"], method=config["chat_feed_method"], params=payload, body_format=config.get("chat_feed_body_format", "json"))
                 
-                if isinstance(res, list) and res:
-                    for msg in res:
-                        if isinstance(msg, dict) and "nickname" in msg and "message" in msg:
-                            send_message(token, chat_id, f"рџ’¬ [{msg['nickname']}]: {msg['message']}", message_thread_id=thread_id)
-                            last_id = max(last_id, msg.get("id", last_id))
+                items = None
+                if isinstance(res, list):
+                    items = res
+                elif isinstance(res, dict):
+                    if isinstance(res.get("items"), list):
+                        items = res["items"]
+                    elif isinstance(res.get("messages"), list):
+                        items = res["messages"]
+                    if isinstance(res.get("latestId"), int):
+                        last_id = max(last_id, res["latestId"])
+                
+                if items:
+                    for msg in items:
+                        if isinstance(msg, dict):
+                            nickname = msg.get("nickname") or msg.get("playerName") or msg.get("player")
+                            message = msg.get("message") or msg.get("text")
+                            if nickname is not None and message is not None:
+                                send_message(token, chat_id, f"рџ’¬ [{nickname}]: {message}", message_thread_id=thread_id)
+                                last_id = max(last_id, msg.get("id", last_id))
                     
                     config["chat_feed_after_id"] = last_id
                     save_config(config)
@@ -256,5 +270,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
