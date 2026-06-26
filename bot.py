@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -7,6 +8,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
+CONFIG_EXAMPLE_PATH = BASE_DIR / "config.example.json"
 USERS_PATH = BASE_DIR / "users.json"
 
 COMMAND_POLL_DELAY_SECONDS = 0.5
@@ -14,6 +16,29 @@ CHAT_FEED_POLL_INTERVAL_SECONDS = 3.0
 
 ONLINE_ALIASES = {"online", "\u043e\u043d\u043b\u0430\u0439\u043d"}
 CHAT_ALIASES = {"chat", "cha", "ch", "\u0447\u0430\u0442", "\u0447\u0430\u0442\u0438\u043a"}
+
+CONFIG_ENV_MAP = {
+    "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+    "mirides_url": "MIRIDES_URL",
+    "mirides_method": "MIRIDES_METHOD",
+    "mirides_body_format": "MIRIDES_BODY_FORMAT",
+    "mirides_token": "MIRIDES_TOKEN",
+    "mirides_token_field": "MIRIDES_TOKEN_FIELD",
+    "mirides_message_field": "MIRIDES_MESSAGE_FIELD",
+    "mirides_nickname_field": "MIRIDES_NICKNAME_FIELD",
+    "online_url": "ONLINE_URL",
+    "online_method": "ONLINE_METHOD",
+    "online_body_format": "ONLINE_BODY_FORMAT",
+    "online_token": "ONLINE_TOKEN",
+    "online_token_field": "ONLINE_TOKEN_FIELD",
+    "chat_feed_url": "CHAT_FEED_URL",
+    "chat_feed_method": "CHAT_FEED_METHOD",
+    "chat_feed_body_format": "CHAT_FEED_BODY_FORMAT",
+    "chat_feed_token": "CHAT_FEED_TOKEN",
+    "chat_feed_token_field": "CHAT_FEED_TOKEN_FIELD",
+    "chat_forward_chat_id": "CHAT_FORWARD_CHAT_ID",
+    "chat_forward_thread_id": "CHAT_FORWARD_THREAD_ID",
+}
 
 
 def load_json(path, default):
@@ -35,14 +60,44 @@ def save_json(path, data):
 def ensure_runtime_files():
     if not USERS_PATH.exists():
         save_json(USERS_PATH, {})
+    if not CONFIG_PATH.exists() and CONFIG_EXAMPLE_PATH.exists():
+        example = load_json(CONFIG_EXAMPLE_PATH, {})
+        if isinstance(example, dict) and example:
+            save_json(CONFIG_PATH, example)
+
+
+def read_env_config():
+    config = {}
+    for key, env_name in CONFIG_ENV_MAP.items():
+        value = os.getenv(env_name)
+        if value is None or value == "":
+            continue
+        config[key] = value
+    return config
 
 
 def load_config():
-    config = load_json(CONFIG_PATH, {})
+    config = {}
+    if CONFIG_PATH.exists():
+        config = load_json(CONFIG_PATH, {})
+    elif CONFIG_EXAMPLE_PATH.exists():
+        config = load_json(CONFIG_EXAMPLE_PATH, {})
+
+    if not isinstance(config, dict):
+        config = {}
+
+    config.update(read_env_config())
+
     required = ["telegram_bot_token", "mirides_url", "online_url"]
     missing = [key for key in required if not config.get(key)]
     if missing:
-        raise RuntimeError("config.json is missing required fields: " + ", ".join(missing))
+        env_names = ", ".join(f"{key}={CONFIG_ENV_MAP[key]}" for key in missing)
+        raise RuntimeError(
+            "config.json is missing required fields: "
+            + ", ".join(missing)
+            + ". Set them in config.json or via env vars: "
+            + env_names
+        )
 
     config.setdefault("poll_timeout_seconds", 5)
     config.setdefault("chat_forward_chat_id", "")
