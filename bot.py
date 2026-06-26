@@ -205,6 +205,9 @@ async def telegram_polling_loop(config):
                             print(f"[-] РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РІ РёРіСЂСѓ: {e}")
                             
         except Exception as e:
+            if isinstance(e, urllib.error.HTTPError) and e.code == 409:
+                print("[-] Telegram API вернул 409 Conflict. Остановите все другие копии бота с этим токеном и перезапустите только один экземпляр.")
+                return
             print(f"[-] Ошибка обработки Telegram: {e}")
             await asyncio.sleep(3)
         await asyncio.sleep(0.5)
