@@ -9,7 +9,6 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 USERS_PATH = BASE_DIR / "users.json"
 
-POLL_TIMEOUT_SECONDS = 5
 COMMAND_POLL_DELAY_SECONDS = 0.5
 CHAT_FEED_POLL_INTERVAL_SECONDS = 3.0
 
@@ -40,12 +39,12 @@ def ensure_runtime_files():
 
 def load_config():
     config = load_json(CONFIG_PATH, {})
-    required_keys = ["telegram_bot_token", "mirides_url", "online_url"]
-    missing = [key for key in required_keys if not config.get(key)]
+    required = ["telegram_bot_token", "mirides_url", "online_url"]
+    missing = [key for key in required if not config.get(key)]
     if missing:
         raise RuntimeError("config.json is missing required fields: " + ", ".join(missing))
 
-    config.setdefault("poll_timeout_seconds", POLL_TIMEOUT_SECONDS)
+    config.setdefault("poll_timeout_seconds", 5)
     config.setdefault("chat_forward_chat_id", "")
     config.setdefault("chat_forward_thread_id", "")
     config.setdefault("mirides_method", "POST")
@@ -57,14 +56,13 @@ def load_config():
     config.setdefault("online_method", "GET")
     config.setdefault("online_token", "")
     config.setdefault("online_token_field", "token")
-    config.setdefault("online_response_path", "online")
     config.setdefault("online_body_format", "json")
     config.setdefault("chat_feed_url", "")
     config.setdefault("chat_feed_method", "GET")
     config.setdefault("chat_feed_token", "")
     config.setdefault("chat_feed_token_field", "token")
-    config.setdefault("chat_feed_after_id", 0)
     config.setdefault("chat_feed_body_format", "json")
+    config.setdefault("chat_feed_after_id", 0)
     return config
 
 
@@ -120,41 +118,6 @@ def resolve_display_name(record, fallback_user=None):
     return "User"
 
 
-def find_user_record(users, query):
-    query = str(query or "").strip()
-    if not query:
-        return None
-
-    if query.startswith("@"):
-        query = query[1:]
-
-    if query in users:
-        return users[query]
-
-    normalized_query = query.lower()
-    for record in users.values():
-        if normalize_username(record.get("telegram_username")) == normalized_query:
-            return record
-        if str(record.get("nickname", "")).lower() == normalized_query:
-            return record
-        if str(record.get("telegram_name", "")).lower() == normalized_query:
-            return record
-
-    for record in users.values():
-        haystack = " ".join(
-            [
-                str(record.get("telegram_username", "")),
-                str(record.get("nickname", "")),
-                str(record.get("telegram_name", "")),
-                str(record.get("telegram_id", "")),
-            ]
-        ).lower()
-        if normalized_query in haystack:
-            return record
-
-    return None
-
-
 def parse_command_text(text):
     raw = str(text or "").strip()
     if not raw:
@@ -171,10 +134,8 @@ def parse_command_text(text):
 
     if command in ONLINE_ALIASES:
         return "online", argument
-
     if command in CHAT_ALIASES:
         return "chat", argument
-
     return command, argument
 
 
@@ -205,11 +166,7 @@ def send_message(token, chat_id, text, message_thread_id=None):
 def send_http_request(url, method="GET", params=None, body_format="json"):
     params = params or {}
     method = method.upper()
-
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "TelegramMiridesBot/2.0",
-    }
+    headers = {"Accept": "application/json", "User-Agent": "MiridesBridgeBot/1.0"}
 
     if method == "GET":
         query = urllib.parse.urlencode(params)
@@ -232,45 +189,27 @@ def send_http_request(url, method="GET", params=None, body_format="json"):
         return raw_body.strip()
 
 
-def extract_value(payload, path):
-    if not path or not isinstance(payload, dict):
-        return payload
-    current = payload
-    for part in path.split("."):
-        if isinstance(current, dict) and part in current:
-            current = current[part]
-        else:
-            return None
-    return current
-
-
-def format_online_response(res):
-    if isinstance(res, dict):
-        online = res.get("online")
-        max_players = res.get("maxPlayers")
-        players = res.get("players")
-        if isinstance(players, list) and players:
-            players_text = ", ".join(str(item) for item in players)
-            if online is not None and max_players is not None:
-                return f"\u041e\u043d\u043b\u0430\u0439\u043d {online}/{max_players}: {players_text}"
-            if online is not None:
-                return f"\u041e\u043d\u043b\u0430\u0439\u043d {online}: {players_text}"
-            return f"\u0418\u0433\u0440\u043e\u043a\u0438: {players_text}"
+def format_online_response(payload):
+    if isinstance(payload, dict):
+        online = payload.get("online")
+        max_players = payload.get("maxPlayers")
+        players = payload.get("players")
+        if isinstance(players, list):
+            if players:
+                names = ", ".join(str(item) for item in players)
+                if online is not None and max_players is not None:
+                    return f"\u041e\u043d\u043b\u0430\u0439\u043d {online}/{max_players}: {names}"
+                return f"\u0418\u0433\u0440\u043e\u043a\u0438: {names}"
+            return "\u041d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043d\u0438\u043a\u043e\u0433\u043e \u043d\u0435\u0442."
         if isinstance(online, int) and isinstance(max_players, int):
             return f"\u041e\u043d\u043b\u0430\u0439\u043d {online}/{max_players}"
         if isinstance(online, int):
             return f"\u041e\u043d\u043b\u0430\u0439\u043d {online}"
 
-    if isinstance(res, list):
-        if res:
-            return "\u0418\u0433\u0440\u043e\u043a\u0438: " + ", ".join(str(item) for item in res)
+    if isinstance(payload, list):
+        if payload:
+            return "\u0418\u0433\u0440\u043e\u043a\u0438: " + ", ".join(str(item) for item in payload)
         return "\u041d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043d\u0438\u043a\u043e\u0433\u043e \u043d\u0435\u0442."
-
-    extracted = extract_value(res, "online")
-    if isinstance(extracted, list) and extracted:
-        return "\u0418\u0433\u0440\u043e\u043a\u0438: " + ", ".join(str(item) for item in extracted)
-    if isinstance(extracted, int):
-        return f"\u041e\u043d\u043b\u0430\u0439\u043d {extracted}"
 
     return "\u041d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043d\u0438\u043a\u043e\u0433\u043e \u043d\u0435\u0442."
 
@@ -278,39 +217,32 @@ def format_online_response(res):
 async def handle_telegram_command(config, msg, text, chat_id, thread_id):
     users = load_users()
     from_user = msg.get("from", {})
-    sender_id = str(from_user.get("id", ""))
     sender_record = ensure_user_record(
         users,
-        sender_id,
+        from_user.get("id", ""),
         from_user.get("username", ""),
         from_user.get("first_name", "User"),
     )
+    save_users(users)
 
     command, argument = parse_command_text(text)
     if not command:
         return False
 
     token = config["telegram_bot_token"]
-    print(f"[+] Command received: {command} arg={argument!r} from={sender_id}")
+    print(f"[+] command={command} arg={argument!r} from={sender_record.get('telegram_id', '')}")
 
     if command == "online":
         try:
-            params = {config["online_token_field"]: config["online_token"]}
-            res = send_http_request(
+            response = send_http_request(
                 config["online_url"],
                 method=config["online_method"],
-                params=params,
+                params={config["online_token_field"]: config["online_token"]},
                 body_format=config.get("online_body_format", "json"),
             )
-            reply = format_online_response(res)
-            send_message(token, chat_id, reply, message_thread_id=thread_id)
+            send_message(token, chat_id, format_online_response(response), message_thread_id=thread_id)
         except Exception as e:
-            send_message(
-                token,
-                chat_id,
-                f"\u041d\u0435 \u0441\u043c\u043e\u0433 \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c online: {e}",
-                message_thread_id=thread_id,
-            )
+            send_message(token, chat_id, f"\u041d\u0435 \u0441\u043c\u043e\u0433 \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c online: {e}", message_thread_id=thread_id)
         return True
 
     if command == "chat":
@@ -336,21 +268,11 @@ async def handle_telegram_command(config, msg, text, chat_id, thread_id):
                 config["mirides_url"],
                 method=config["mirides_method"],
                 params=payload,
-                body_format=config.get("mirides_body_format", "json"),
+                body_format=config.get("mirides_body_format", "form"),
             )
-            send_message(
-                token,
-                chat_id,
-                "\u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e \u0432 \u0438\u0433\u0440\u0443.",
-                message_thread_id=thread_id,
-            )
+            send_message(token, chat_id, "\u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e \u0432 \u0438\u0433\u0440\u0443.", message_thread_id=thread_id)
         except Exception as e:
-            send_message(
-                token,
-                chat_id,
-                f"\u041d\u0435 \u0441\u043c\u043e\u0433 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0432 \u0438\u0433\u0440\u0443: {e}",
-                message_thread_id=thread_id,
-            )
+            send_message(token, chat_id, f"\u041d\u0435 \u0441\u043c\u043e\u0433 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0432 \u0438\u0433\u0440\u0443: {e}", message_thread_id=thread_id)
         return True
 
     return False
@@ -373,9 +295,7 @@ async def telegram_polling_loop(config):
             for update in updates:
                 offset = update["update_id"] + 1
                 message = update.get("message")
-                if not isinstance(message, dict):
-                    continue
-                if "text" not in message:
+                if not isinstance(message, dict) or "text" not in message:
                     continue
 
                 text = str(message["text"]).strip()
@@ -388,10 +308,8 @@ async def telegram_polling_loop(config):
 
                 if str(chat_id) != str(config["chat_forward_chat_id"]):
                     continue
-
                 if configured_thread_id and thread_id != configured_thread_id:
                     continue
-
                 if text.startswith("/"):
                     continue
 
@@ -403,22 +321,20 @@ async def telegram_polling_loop(config):
                     sender.get("username", ""),
                     sender.get("first_name", "User"),
                 )
+                save_users(users)
                 nickname = resolve_display_name(sender_record, sender)
                 payload = {
                     config["mirides_token_field"]: config["mirides_token"],
                     config["mirides_nickname_field"]: nickname,
                     config["mirides_message_field"]: text,
                 }
-                try:
-                    send_http_request(
-                        config["mirides_url"],
-                        method=config["mirides_method"],
-                        params=payload,
-                        body_format=config.get("mirides_body_format", "json"),
-                    )
-                    print(f"[+] Sent to Minecraft from {nickname}: {text}")
-                except Exception as e:
-                    print(f"[-] Failed to send message to Minecraft: {e}")
+                send_http_request(
+                    config["mirides_url"],
+                    method=config["mirides_method"],
+                    params=payload,
+                    body_format=config.get("mirides_body_format", "form"),
+                )
+                print(f"[+] Sent to Minecraft from {nickname}: {text}")
 
         except urllib.error.HTTPError as e:
             if e.code == 409:
@@ -444,49 +360,42 @@ async def minecraft_polling_loop(config):
     while True:
         try:
             if config.get("chat_feed_url"):
-                payload = {
-                    config["chat_feed_token_field"]: config["chat_feed_token"],
-                    "after_id": last_id,
-                }
-                res = send_http_request(
+                response = send_http_request(
                     config["chat_feed_url"],
                     method=config["chat_feed_method"],
-                    params=payload,
+                    params={
+                        config["chat_feed_token_field"]: config["chat_feed_token"],
+                        "after_id": last_id,
+                    },
                     body_format=config.get("chat_feed_body_format", "json"),
                 )
 
-                items = None
-                if isinstance(res, list):
-                    items = res
-                elif isinstance(res, dict):
-                    if isinstance(res.get("items"), list):
-                        items = res["items"]
-                    elif isinstance(res.get("messages"), list):
-                        items = res["messages"]
-                    if isinstance(res.get("latestId"), int):
-                        last_id = max(last_id, res["latestId"])
+                items = []
+                if isinstance(response, dict):
+                    if isinstance(response.get("items"), list):
+                        items = response["items"]
+                    elif isinstance(response.get("messages"), list):
+                        items = response["messages"]
+                    latest_id = response.get("latestId")
+                    if isinstance(latest_id, int):
+                        last_id = max(last_id, latest_id)
+                elif isinstance(response, list):
+                    items = response
 
                 if items:
                     for item in items:
                         if not isinstance(item, dict):
                             continue
-                        nickname = item.get("nickname") or item.get("playerName") or item.get("player") or "system"
+                        nickname = item.get("playerName") or item.get("nickname") or item.get("player") or "system"
                         message = item.get("message") or item.get("text")
                         if message is None:
                             continue
-                        message_id = item.get("id", last_id)
                         try:
-                            message_id = int(message_id)
+                            item_id = int(item.get("id", last_id))
                         except (TypeError, ValueError):
-                            message_id = last_id
-
-                        send_message(
-                            token,
-                            chat_id,
-                            f"[{nickname}]: {message}",
-                            message_thread_id=thread_id,
-                        )
-                        last_id = max(last_id, message_id)
+                            item_id = last_id
+                        send_message(token, chat_id, f"[{nickname}]: {message}", message_thread_id=thread_id)
+                        last_id = max(last_id, item_id)
 
                     config["chat_feed_after_id"] = last_id
                     save_config(config)
