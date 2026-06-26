@@ -1,3 +1,1 @@
-aiogram>=3.0.0
-python-dotenv
-requests
+# No external Python dependencies required.

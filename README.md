@@ -1,27 +1,21 @@
-# TelegramMiridesBot
+# Telegram bot
 
-Bridge between Telegram and Minecraft via `mirides`.
+Run with:
 
-Commands:
-
-```text
-online
-chat
-cha
-ch
-chatik
+```bash
+python bridge_bot.py
 ```
 
-`online` shows server status.
+`config.json` must contain:
 
-`chat` and its aliases send a message from Telegram to Minecraft.
+- `telegram_bot_token`
+- `mirides_url`
+- `online_url`
 
-Example:
+`chat` aliases:
 
-```text
-chat Hello from Telegram
-cha How many players are online?
-chatik Hi all
-```
-
-`users.json` stores Telegram users and their saved Minecraft nicknames from older runs.
+- `chat`
+- `cha`
+- `ch`
+- `чат`
+- `чатик`
