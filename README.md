@@ -1,47 +1,27 @@
 # TelegramMiridesBot
 
-Пиши в группе так:
+Bridge between Telegram and Minecraft via `mirides`.
+
+Commands:
 
 ```text
-nick ваш_ник
 online
-chat ваш_текст
-playtime top
+chat
+cha
+ch
+chatik
 ```
 
-Админские команды без конфликта с Iris:
+`online` shows server status.
+
+`chat` and its aliases send a message from Telegram to Minecraft.
+
+Example:
 
 ```text
-bantgbot @username|id|nick
-unbantgbot @username|id|nick
-whoistgbot @username|id|nick
+chat Hello from Telegram
+cha How many players are online?
+chatik Hi all
 ```
 
-Можно и ответом на сообщение пользователя:
-
-```text
-bantgbot
-unbantgbot
-whoistgbot
-```
-
-Админы задаются в отдельном файле:
-[admins.json](/C:/Users/cekta/Desktop/пвпвап/TelegramMiridesBot/admins.json)
-
-Пример:
-
-```json
-{
-  "admin_ids": [
-    "123456789"
-  ]
-}
-```
-
-Что умеет бот:
-- `nick` сохраняет игровой ник и привязку к Telegram;
-- `online` показывает онлайн сервера;
-- `chat` отправляет сообщение в Minecraft;
-- `playtime top` показывает топ по плейтайму;
-- `whoistgbot` показывает `nick`, `@username`, имя и `telegram id`;
-- `bantgbot` и `unbantgbot` блокируют или разблокируют человека только внутри бота.
+`users.json` stores Telegram users and their saved Minecraft nicknames from older runs.
