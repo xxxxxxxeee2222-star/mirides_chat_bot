@@ -1,7 +1,8 @@
-{
+﻿{
   "telegram_bot_token": "PASTE_TELEGRAM_BOT_TOKEN",
   "mirides_url": "http://YOUR_SERVER_IP:18590/mirides",
   "mirides_method": "POST",
+  "mirides_body_format": "json",
   "mirides_token": "CHANGE_ME_SECRET_TOKEN",
   "mirides_token_field": "token",
   "mirides_message_field": "message",
@@ -9,6 +10,7 @@
   "telegram_id_field": "telegram_id",
   "online_url": "http://YOUR_SERVER_IP:18590/online",
   "online_method": "GET",
+  "online_body_format": "json",
   "online_token": "CHANGE_ME_SECRET_TOKEN",
   "online_token_field": "token",
   "online_response_path": "online",
@@ -20,9 +22,12 @@
   "poll_timeout_seconds": 2,
   "chat_feed_url": "http://YOUR_SERVER_IP:18590/chat-feed",
   "chat_feed_method": "GET",
+  "chat_feed_body_format": "json",
   "chat_feed_token": "CHANGE_ME_SECRET_TOKEN",
   "chat_feed_token_field": "token",
   "chat_feed_after_id": 0,
   "chat_forward_chat_id": "-1000000000000",
   "chat_forward_thread_id": "12345"
 }
+
+

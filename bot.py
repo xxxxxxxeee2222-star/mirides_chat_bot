@@ -1,4 +1,4 @@
-import json
+﻿import json
 import re
 import time
 import asyncio
@@ -13,7 +13,7 @@ USERS_PATH = BASE_DIR / "users.json"
 ADMINS_PATH = BASE_DIR / "admins.json"
 
 COOLDOWN_SECONDS = 2
-CHAT_FEED_POLL_INTERVAL_SECONDS = 3.0  # Увеличено, чтобы избежать ошибки 429
+CHAT_FEED_POLL_INTERVAL_SECONDS = 3.0  # РЈРІРµР»РёС‡РµРЅРѕ, С‡С‚РѕР±С‹ РёР·Р±РµР¶Р°С‚СЊ РѕС€РёР±РєРё 429
 
 NICKNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,16}$")
 
@@ -44,7 +44,7 @@ def load_config():
     required_keys = ["telegram_bot_token", "mirides_url", "online_url"]
     missing = [key for key in required_keys if not config.get(key)]
     if missing:
-        raise RuntimeError("В config.json не заполнены обязательные поля: " + ", ".join(missing))
+        raise RuntimeError("Р’ config.json РЅРµ Р·Р°РїРѕР»РЅРµРЅС‹ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РїРѕР»СЏ: " + ", ".join(missing))
 
     config.setdefault("poll_timeout_seconds", 1)
     config.setdefault("mirides_method", "POST")
@@ -63,6 +63,10 @@ def load_config():
     config.setdefault("chat_feed_token_field", "token")
     config.setdefault("chat_feed_after_id", 0)
     config.setdefault("chat_forward_chat_id", "")
+    config.setdefault("chat_forward_thread_id", "")
+    config.setdefault("mirides_body_format", "json")
+    config.setdefault("online_body_format", "json")
+    config.setdefault("chat_feed_body_format", "json")
     return config
 
 def save_config(config):
@@ -72,7 +76,7 @@ def save_config(config):
 def telegram_request(token, method, params=None):
     params = params or {}
     data = urllib.parse.urlencode(params).encode("utf-8")
-    request = urllib.request.Request(f"https://telegram.org{token}/{method}", data=data)
+    request = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=data)
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -81,14 +85,21 @@ def telegram_request(token, method, params=None):
         return payload["result"]
     except urllib.error.HTTPError as e:
         if e.code == 409:
-            print("[-] Критическая ошибка: Конфликт токена (409). Бот запущен в другом месте!")
+            print("[-] РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР°: РљРѕРЅС„Р»РёРєС‚ С‚РѕРєРµРЅР° (409). Р‘РѕС‚ Р·Р°РїСѓС‰РµРЅ РІ РґСЂСѓРіРѕРј РјРµСЃС‚Рµ!")
         raise e
 
-def send_message(token, chat_id, text):
+def normalize_thread_id(value):
+    if value in (None, "", 0, "0"):
+        return None
+    return str(value)
+
+def send_message(token, chat_id, text, message_thread_id=None):
     params = {"chat_id": str(chat_id), "text": text}
+    if message_thread_id:
+        params["message_thread_id"] = str(message_thread_id)
     telegram_request(token, "sendMessage", params)
 
-def send_http_request(url, method="GET", params=None):
+def send_http_request(url, method="GET", params=None, body_format="json"):
     params = params or {}
     method = method.upper()
     
@@ -102,9 +113,12 @@ def send_http_request(url, method="GET", params=None):
         request_url = url if not query else f"{url}?{query}"
         request = urllib.request.Request(request_url, headers=headers, method="GET")
     else:
-        # ИСПРАВЛЕНО: Теперь отправляем JSON-строку вместо Form-urlencoded
-        data = json.dumps(params).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        if str(body_format).lower() == "form":
+            data = urllib.parse.urlencode(params).encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            data = json.dumps(params).encode("utf-8")
+            headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
 
     try:
@@ -118,7 +132,7 @@ def send_http_request(url, method="GET", params=None):
     except urllib.error.HTTPError as e:
         try:
             error_text = e.read().decode("utf-8")
-            print(f"[-] Сервер Майнкрафта вернул ошибку {e.code}: {error_text}")
+            print(f"[-] РЎРµСЂРІРµСЂ РњР°Р№РЅРєСЂР°С„С‚Р° РІРµСЂРЅСѓР» РѕС€РёР±РєСѓ {e.code}: {error_text}")
         except Exception:
             pass
         raise e
@@ -135,10 +149,11 @@ def extract_value(payload, path):
     return current
 
 async def telegram_polling_loop(config):
-    """ИСПРАВЛЕНО: Новый поток, который принимает сообщения и команды из Telegram чата"""
+    """РРЎРџР РђР’Р›Р•РќРћ: РќРѕРІС‹Р№ РїРѕС‚РѕРє, РєРѕС‚РѕСЂС‹Р№ РїСЂРёРЅРёРјР°РµС‚ СЃРѕРѕР±С‰РµРЅРёСЏ Рё РєРѕРјР°РЅРґС‹ РёР· Telegram С‡Р°С‚Р°"""
     token = config["telegram_bot_token"]
     offset = 0
-    print("[+] Поток обработки команд Telegram успешно запущен!")
+    configured_thread_id = normalize_thread_id(config.get("chat_forward_thread_id"))
+    print("[+] РџРѕС‚РѕРє РѕР±СЂР°Р±РѕС‚РєРё РєРѕРјР°РЅРґ Telegram СѓСЃРїРµС€РЅРѕ Р·Р°РїСѓС‰РµРЅ!")
     
     while True:
         try:
@@ -150,12 +165,13 @@ async def telegram_polling_loop(config):
                     msg = update["message"]
                     text = msg["text"].strip()
                     chat_id = msg["chat"]["id"]
+                    thread_id = normalize_thread_id(msg.get("message_thread_id"))
                     
-                    # Обработка команды online
+                    # РћР±СЂР°Р±РѕС‚РєР° РєРѕРјР°РЅРґС‹ online
                     if text.lower() == "online":
-                        print("[+] Обработка команды online...")
+                        print("[+] РћР±СЂР°Р±РѕС‚РєР° РєРѕРјР°РЅРґС‹ online...")
                         params = {config["online_token_field"]: config["online_token"]}
-                        res = send_http_request(config["online_url"], method=config["online_method"], params=params)
+                        res = send_http_request(config["online_url"], method=config["online_method"], params=params, body_format=config.get("online_body_format", "json"))
                         players = extract_value(res, config["online_response_path"])
                         
                         if isinstance(players, list) and players:
@@ -163,13 +179,16 @@ async def telegram_polling_loop(config):
                         elif isinstance(players, dict) and "list" in players:
                             players_text = ", ".join(str(p) for p in players["list"])
                         else:
-                            players_text = "На сервере никого нет."
+                            players_text = "РќР° СЃРµСЂРІРµСЂРµ РЅРёРєРѕРіРѕ РЅРµС‚."
                             
-                        send_message(token, chat_id, f"🎮 Онлайн: {players_text}")
+                        send_message(token, chat_id, f"рџЋ® РћРЅР»Р°Р№РЅ: {players_text}")
                     
-                    # Пересылка сообщения из ТГ в чат игры
+                    # РџРµСЂРµСЃС‹Р»РєР° СЃРѕРѕР±С‰РµРЅРёСЏ РёР· РўР“ РІ С‡Р°С‚ РёРіСЂС‹
                     elif str(chat_id) == str(config["chat_forward_chat_id"]):
-                        # Игнорируем команды самого бота
+                        if configured_thread_id and thread_id != configured_thread_id:
+                            continue
+
+                        # РРіРЅРѕСЂРёСЂСѓРµРј РєРѕРјР°РЅРґС‹ СЃР°РјРѕРіРѕ Р±РѕС‚Р°
                         if text.startswith("/"):
                             continue
                             
@@ -180,21 +199,23 @@ async def telegram_polling_loop(config):
                             config["mirides_message_field"]: text
                         }
                         try:
-                            send_http_request(config["mirides_url"], method=config["mirides_method"], params=payload)
-                            print(f"[+] Отправлено в Minecraft от {nickname}: {text}")
+                            send_http_request(config["mirides_url"], method=config["mirides_method"], params=payload, body_format=config.get("mirides_body_format", "json"))
+                            print(f"[+] РћС‚РїСЂР°РІР»РµРЅРѕ РІ Minecraft РѕС‚ {nickname}: {text}")
                         except Exception as e:
-                            print(f"[-] Не удалось отправить сообщение в игру: {e}")
+                            print(f"[-] РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РІ РёРіСЂСѓ: {e}")
                             
         except Exception as e:
+            print(f"[-] Ошибка обработки Telegram: {e}")
             await asyncio.sleep(3)
         await asyncio.sleep(0.5)
 
 async def minecraft_polling_loop(config):
-    """Поток, который забирает сообщения из игры и шлет их в ТГ чат"""
+    """РџРѕС‚РѕРє, РєРѕС‚РѕСЂС‹Р№ Р·Р°Р±РёСЂР°РµС‚ СЃРѕРѕР±С‰РµРЅРёСЏ РёР· РёРіСЂС‹ Рё С€Р»РµС‚ РёС… РІ РўР“ С‡Р°С‚"""
     token = config["telegram_bot_token"]
     chat_id = config["chat_forward_chat_id"]
+    thread_id = normalize_thread_id(config.get("chat_forward_thread_id"))
     last_id = config["chat_feed_after_id"]
-    print("[+] Поток чтения чата Minecraft успешно запущен!")
+    print("[+] РџРѕС‚РѕРє С‡С‚РµРЅРёСЏ С‡Р°С‚Р° Minecraft СѓСЃРїРµС€РЅРѕ Р·Р°РїСѓС‰РµРЅ!")
     
     while True:
         try:
@@ -203,25 +224,25 @@ async def minecraft_polling_loop(config):
                     config["chat_feed_token_field"]: config["chat_feed_token"], 
                     "after_id": last_id
                 }
-                res = send_http_request(config["chat_feed_url"], method=config["chat_feed_method"], params=payload)
+                res = send_http_request(config["chat_feed_url"], method=config["chat_feed_method"], params=payload, body_format=config.get("chat_feed_body_format", "json"))
                 
                 if isinstance(res, list) and res:
                     for msg in res:
                         if isinstance(msg, dict) and "nickname" in msg and "message" in msg:
-                            send_message(token, chat_id, f"💬 [{msg['nickname']}]: {msg['message']}")
+                            send_message(token, chat_id, f"рџ’¬ [{msg['nickname']}]: {msg['message']}", message_thread_id=thread_id)
                             last_id = max(last_id, msg.get("id", last_id))
                     
                     config["chat_feed_after_id"] = last_id
                     save_config(config)
         except Exception as e:
-            pass
+            print(f"[-] Ошибка чтения Minecraft-чата: {e}")
         await asyncio.sleep(CHAT_FEED_POLL_INTERVAL_SECONDS)
 
 def main():
     ensure_runtime_files()
     config = load_config()
     
-    # Запуск асинхронных потоков
+    # Р—Р°РїСѓСЃРє Р°СЃРёРЅС…СЂРѕРЅРЅС‹С… РїРѕС‚РѕРєРѕРІ
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
@@ -235,3 +256,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
